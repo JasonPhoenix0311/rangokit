@@ -75,6 +75,6 @@ Las prácticas y fallas reales de laboratorio son lo más valioso. Lee [CONTRIBU
 
 ## Licencia
 
-Copyright (C) 2026 Mariano Ernesto Ramírez Lozano.
+Copyright (C) 2026 Erick Ramirez.
 
 Distribuido bajo la [GNU AGPL 3.0](LICENSE). Puedes usar, estudiar, modificar y vender este software. Si distribuyes una versión modificada o la ofreces como servicio en red, debes publicar su código bajo la misma licencia.
