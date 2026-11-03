@@ -1,0 +1,94 @@
+<title>Rangokit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=B612+Mono:wght@400;700&display=swap">
+<style>/*__STYLES__*/</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <p class="wordmark">Rangokit</p>
+      <p class="sheet-id">Práctica 01 · Rev. A</p>
+    </div>
+    <div class="goal">
+      <h1>Retorno automático con enclavamiento</h1>
+      <p>Al pulsar S1, el cilindro 1A debe salir hasta 100 mm y regresar solo.</p>
+    </div>
+  </header>
+
+  <section class="faults" aria-label="Elegir una falla">
+    <p class="label">Falla para probar</p>
+    <div class="chips" id="chips"></div>
+    <p class="tip">También puedes tocar cualquier cable o manguera para soltarlo.</p>
+  </section>
+
+  <main class="bench">
+    <div class="drawings">
+      <figure class="sheet pneu">
+        <figcaption>
+          <span>Neumática</span>
+          <span class="read"><b id="r-x">0 mm</b><b id="r-p">6 bar</b></span>
+        </figcaption>
+        <div class="svgwrap"><svg id="pneu" viewBox="0 0 630 430" role="group" aria-label="Circuito neumático"></svg></div>
+      </figure>
+
+      <section class="strip" aria-label="Controles">
+        <button class="push" id="s1" type="button" aria-label="Pulsador S1, mantén pulsado"><span>S1</span></button>
+        <div class="runs">
+          <button class="primary" id="test" type="button">Probar práctica</button>
+          <button id="reset" type="button">Reiniciar</button>
+          <label class="toggle"><input id="stepmode" type="checkbox"> Paso a paso</label>
+          <button id="next" type="button" hidden>Siguiente paso</button>
+        </div>
+        <div class="lamps" aria-label="Estado de los componentes">
+          <span class="lamp" id="l-k1">K1</span>
+          <span class="lamp" id="l-y1">Y1</span>
+          <span class="lamp" id="l-s2">S2</span>
+        </div>
+        <div class="slider">
+          <label for="s2pos">Posición de S2 <b id="s2val">100 mm</b></label>
+          <input id="s2pos" type="range" min="40" max="120" step="1" value="100">
+        </div>
+      </section>
+
+      <figure class="sheet ladder">
+        <figcaption>
+          <span>Mando eléctrico</span>
+          <span class="read"><b>24 V DC</b></span>
+        </figcaption>
+        <div class="svgwrap"><svg id="ladder" viewBox="0 0 600 450" role="group" aria-label="Circuito eléctrico"></svg></div>
+      </figure>
+
+      <ul class="legend" aria-label="Simbología">
+        <li><i class="k-flow"></i>Corriente</li>
+        <li><i class="k-volt"></i>24 V sin corriente</li>
+        <li><i class="k-air"></i>Aire a 6 bar</li>
+        <li><i class="k-fault"></i>Falla encontrada</li>
+      </ul>
+    </div>
+
+    <aside class="diag" aria-live="polite">
+      <h2>Diagnóstico</h2>
+      <p class="verdict" id="verdict"></p>
+      <ul class="checks" id="checks"></ul>
+      <div id="finding" hidden>
+        <p class="symptom" id="symptom"></p>
+        <ol class="hints" id="hints"></ol>
+        <div class="hint-actions">
+          <button class="primary" id="more" type="button">Ver siguiente pista</button>
+          <button class="primary" id="fix" type="button" hidden>Aplicar corrección</button>
+          <span class="used" id="used"></span>
+        </div>
+      </div>
+      <h2 class="sub">Eventos</h2>
+      <ol class="log" id="log"></ol>
+    </aside>
+  </main>
+
+  <footer>
+    <p>Demo de concepto con una sola práctica. La física está simplificada: velocidad constante, sin caída de presión y con válvula de mando directo. Las pistas salen de reglas fijas y no usan IA. Revisa tu instalación real antes de energizarla.</p>
+    <p>Rangokit es código abierto bajo licencia AGPL-3.0.</p>
+  </footer>
+</div>
+<script>/*__SCRIPT__*/</script>
