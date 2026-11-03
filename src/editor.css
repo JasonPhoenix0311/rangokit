@@ -1,0 +1,269 @@
+/* Navegación entre secciones */
+.views { display: flex; gap: 6px; flex-wrap: wrap; }
+.view { display: grid; gap: 14px; min-width: 0; }
+.view[hidden], .goal[hidden] { display: none; }
+
+/* Proyectos */
+.projects { display: grid; gap: 12px; max-width: 760px; }
+.projects-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+.projects h2, .arduino-head h2 { font-family: var(--display); font-weight: 600; font-size: 22px; }
+.new-project { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; background: var(--sheet); border: 1px solid var(--line); padding: 12px; }
+.new-project[hidden] { display: none; }
+.new-project label, .field { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
+input, select {
+  font: 14px/1.2 var(--body);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 9px;
+  min-height: 38px;
+  min-width: 0;
+}
+.new-project input { width: min(340px, 80vw); }
+.project-list { display: grid; gap: 8px; }
+.project-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; align-items: center; background: var(--sheet); border: 1px solid var(--line); padding: 10px 12px; }
+.project-list li > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.empty-state { background: var(--sheet); border: 1px dashed var(--line); padding: 18px; color: var(--muted); }
+
+/* Editor */
+.editor {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 250px minmax(0, 1fr) 300px;
+  grid-template-areas: "toolbar toolbar toolbar" "palette canvas inspector" "arduino arduino arduino";
+  align-items: start;
+}
+.ed-toolbar { grid-area: toolbar; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.ed-name { display: flex; gap: 8px; align-items: center; flex: 1 1 260px; min-width: 0; }
+.ed-name input { flex: 1; font-weight: 600; }
+.ed-status { flex: 1 0 100%; font-size: 13px; color: var(--muted); min-height: 1.2em; }
+.ed-status.warn { color: var(--fault); font-weight: 600; }
+
+.palette, .inspector, .arduino-panel { background: var(--sheet); border: 1px solid var(--line); padding: 10px 12px; min-width: 0; display: grid; gap: 8px; }
+.arduino-panel[hidden] { display: none; }
+.palette { grid-area: palette; }
+.palette input, .palette select { width: 100%; }
+.palette .chips button { padding: 6px 9px; min-height: 32px; font-size: 13px; }
+.palette-items { display: grid; gap: 6px; max-height: 560px; overflow-y: auto; padding-right: 2px; }
+.palette-items h3 { padding-top: 4px; }
+.palette-items ul { display: grid; gap: 4px; }
+.pal-item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; font-weight: 500; font-size: 13px; padding: 5px 8px; background: var(--paper); }
+svg.pal-icon { width: 46px; height: 34px; flex: none; }
+.pal-icon .sym * { stroke-width: 3; }
+
+.canvas-wrap {
+  grid-area: canvas;
+  min-width: 0;
+  height: 640px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background-color: var(--sheet);
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-attachment: local;
+}
+svg.ed-canvas { width: 1600px; max-width: none; height: 1000px; }
+.ed-comp { cursor: grab; outline: none; touch-action: none; }
+.ed-comp .ed-body { fill: transparent; stroke: none; }
+.ed-comp:hover .ed-body, .ed-comp:focus-visible .ed-body { stroke: var(--line); stroke-dasharray: 4 4; }
+.ed-comp.selected .ed-body { stroke: var(--ink); stroke-dasharray: 4 4; stroke-width: 1.5; }
+.ed-comp.flagged .ed-body { stroke: var(--fault); stroke-dasharray: none; stroke-width: 2; }
+.ed-comp .sm { pointer-events: none; font-size: 10px; }
+.glyph-text { font-family: var(--mono); font-size: 11px; fill: var(--ink); stroke: none !important; }
+.ed-port { cursor: crosshair; outline: none; }
+.ed-port .hit { fill: transparent; stroke: none; }
+.ed-port .dot { fill: var(--sheet); stroke: var(--volt); stroke-width: 2; }
+.ed-port.air .dot { stroke: var(--air); }
+.ed-port.pin .dot { stroke: var(--ok); }
+.ed-port.used.elec .dot { fill: var(--volt); }
+.ed-port.used.air .dot { fill: var(--air); }
+.ed-port.used.pin .dot { fill: var(--ok); }
+.ed-port:hover .dot, .ed-port:focus-visible .dot { stroke-width: 4; }
+.ed-port.pending .dot { fill: var(--fault); stroke: var(--fault); }
+.ed-link { cursor: pointer; outline: none; }
+.ed-link .hit { stroke: transparent; stroke-width: 14; fill: none; }
+.ed-link .line { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; }
+.ed-link.air .line { stroke: var(--air); stroke-width: 3; }
+.ed-link:hover .line, .ed-link:focus-visible .line { stroke-width: 4; }
+.ed-link.selected .line { stroke: var(--fault); stroke-width: 4; }
+.ed-hint { font-family: var(--display); font-size: 22px; fill: var(--muted); }
+
+.inspector { grid-area: inspector; }
+#ed-panel { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.inspector h3 { font-family: var(--display); font-weight: 600; font-size: 20px; }
+.inspector .chips button { padding: 6px 10px; min-height: 32px; }
+.inspector .has-errors { color: var(--fault); }
+.inspector button[aria-pressed="true"].has-errors { color: var(--on-ink); background: var(--fault); border-color: var(--fault); }
+.plain { display: grid; gap: 2px; font-family: var(--mono); font-size: 12px; }
+.steps { list-style: decimal; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.findings { display: grid; gap: 8px; }
+.findings li { display: grid; gap: 2px; padding-left: 8px; border-left: 3px solid var(--volt); }
+.findings li.error { border-left-color: var(--fault); }
+.link-button { background: none; border: 0; padding: 0; min-height: 0; text-align: left; font: inherit; font-size: 14px; color: var(--ink); cursor: pointer; }
+.link-button:hover { text-decoration: underline; }
+
+.arduino-panel { grid-area: arduino; gap: 12px; }
+.arduino-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.arduino-head .tip { flex-basis: 100%; }
+.arduino-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.pins-wrap { overflow-x: auto; }
+.pins { border-collapse: collapse; width: 100%; font-size: 13px; }
+.pins th, .pins td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+.pins thead th { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 400; }
+.pins tbody th { font-family: var(--mono); white-space: nowrap; }
+.pins tbody th small { display: block; font-weight: 400; color: var(--muted); font-size: 10px; }
+.pins select, .pins input { min-height: 32px; padding: 5px 6px; font-size: 13px; }
+.pins input { width: 110px; }
+.pins tr.unused { opacity: .6; }
+.pins tr.unused:hover, .pins tr.unused:focus-within { opacity: 1; }
+.logic { display: grid; gap: 8px; min-width: 0; }
+.logic h3 { font-family: var(--display); font-weight: 600; font-size: 18px; }
+.rules { display: grid; gap: 6px; list-style: decimal; padding-left: 22px; }
+.rules li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.rules select, .rules input { min-height: 32px; padding: 5px 6px; font-size: 13px; }
+.rules input { width: 80px; }
+.rules button { min-height: 32px; padding: 5px 9px; }
+.code-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding-top: 6px; }
+.code { margin: 0; font: 12px/1.5 var(--mono); background: var(--paper); border: 1px solid var(--line); padding: 10px 12px; max-height: 520px; overflow: auto; white-space: pre; tab-size: 2; }
+
+/* LED: el triángulo toma el color elegido */
+.ed-comp.led .sym path:first-of-type { fill: var(--led); }
+
+/* Menú contextual */
+.ed-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 280px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  background: var(--sheet);
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / .28);
+}
+.ed-menu[hidden] { display: none; }
+.ed-menu .menu-title { font-family: var(--display); font-weight: 600; font-size: 15px; padding: 4px 8px 6px; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
+.ed-menu .menu-label { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 8px 2px; }
+.ed-menu > button { display: flex; justify-content: space-between; gap: 12px; align-items: center; width: 100%; text-align: left; border: 0; background: none; min-height: 32px; padding: 6px 8px; font-weight: 500; }
+.ed-menu > button:hover, .ed-menu > button:focus-visible { background: var(--paper); outline: none; }
+.ed-menu > button.danger { color: var(--fault); }
+.ed-menu kbd { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.ed-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.swatches, .menu-values { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 8px 4px; }
+.swatches button { width: 30px; height: 30px; min-height: 30px; padding: 3px; border-radius: 50%; }
+.swatches button span { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--swatch); border: 1px solid var(--line); }
+.swatches button[aria-checked="true"] { border: 2px solid var(--ink); }
+.menu-values button { min-height: 28px; padding: 4px 7px; font-size: 12px; font-family: var(--mono); }
+.menu-values button[aria-checked="true"] { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+
+/* Ejecución */
+.run-button { min-width: 120px; }
+.run-button.stop { background: var(--fault); border-color: var(--fault); color: #fff; }
+.editor.running .palette { opacity: .45; pointer-events: none; }
+.editor.running .canvas-wrap { outline: 2px solid var(--ok); outline-offset: -2px; }
+.editor.running .ed-port { pointer-events: none; }
+.editor.running .ed-comp { cursor: default; }
+.editor.running .ed-comp.interactive { cursor: pointer; }
+.editor.running .ed-comp.interactive .ed-body { stroke: var(--line); stroke-dasharray: 2 4; }
+.editor.running .ed-comp.interactive:hover .ed-body { stroke: var(--ink); }
+.ed-comp.active .ed-body { stroke: var(--electric); stroke-dasharray: none; stroke-width: 2; }
+.ed-comp.active .sym rect:not(.chamber-fill) { fill: color-mix(in srgb, var(--electric) 18%, transparent); }
+.ed-comp.burned .ed-body { stroke: var(--fault); stroke-width: 3; stroke-dasharray: 6 4; }
+.editor.running .ed-comp.led:not(.active) .sym path:first-of-type { fill-opacity: .2; }
+.ed-comp.led.active .sym path:first-of-type { filter: drop-shadow(0 0 6px var(--led)) drop-shadow(0 0 2px var(--led)); }
+.ed-comp.led.active .ed-body { stroke: var(--led); }
+.chamber-fill { fill: var(--air); opacity: 0; stroke: none !important; }
+.chamber-fill.on { opacity: .35; }
+.ed-link.live.v24 .line { stroke: var(--volt); stroke-width: 3; }
+.ed-link.live.v5 .line { stroke: var(--ok); stroke-width: 3; }
+.ed-link.live.air .line { stroke: var(--air); stroke-width: 4; stroke-dasharray: 10 6; animation: run .6s linear infinite; }
+.run-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.run-controls .hold { touch-action: none; user-select: none; -webkit-user-select: none; }
+.run-controls button[aria-pressed="true"] { background: var(--push); border-color: var(--push); color: #fff; }
+.run-controls .field { flex: 1 1 100%; }
+.run-controls input[type="range"] { width: 100%; accent-color: var(--ink); min-height: 0; padding: 0; }
+.inspector progress { width: 120px; vertical-align: middle; accent-color: var(--air); }
+.pins.live td.on { color: var(--ok); font-weight: 700; }
+.inspector .log { max-height: 220px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .ed-link.live.air .line { animation: none; stroke-dasharray: none; }
+}
+
+/* Aprendizaje y búsqueda en la red */
+.feedback { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.feedback button { min-height: 32px; padding: 5px 10px; }
+.learned { color: var(--ok); }
+.repos { display: grid; gap: 8px; }
+.repos li { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); background: var(--paper); font-size: 13px; overflow-wrap: anywhere; }
+.repos a { color: var(--ink); font-weight: 600; }
+.repos button { justify-self: start; }
+.repos button[aria-pressed="true"] { background: var(--ok); border-color: var(--ok); color: var(--on-ink); }
+
+/* Conversación con Rango */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.chat {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: 0 18px 48px rgb(0 0 0 / .35);
+}
+.chat[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.chat::backdrop { background: rgb(0 0 0 / .45); }
+.chat-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.chat-head h2 { font-family: var(--display); font-weight: 600; font-size: 22px; }
+.chat-log { display: grid; gap: 12px; align-content: start; overflow-y: auto; padding: 14px; min-height: 280px; }
+.msg { display: grid; gap: 4px; max-width: 88%; animation: appear .18s ease-out; }
+.msg.rango { justify-self: start; }
+.msg.user { justify-self: end; }
+.msg .who { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.msg.user .who { justify-self: end; }
+.bubble { display: grid; gap: 6px; padding: 9px 12px; border-radius: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.msg.rango .bubble { background: var(--paper); border: 1px solid var(--line); border-top-left-radius: 3px; }
+.msg.user .bubble { background: var(--ink); color: var(--on-ink); border-top-right-radius: 3px; }
+.chat-chips, .chat-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-chips button { border-radius: 999px; min-height: 34px; padding: 6px 12px; font-weight: 500; }
+.chat-actions button { min-height: 34px; padding: 6px 12px; }
+.chat-form { display: flex; gap: 8px; align-items: end; padding: 10px 14px 14px; border-top: 1px solid var(--line); }
+.chat-form textarea { flex: 1; min-height: 44px; max-height: 160px; }
+.chat-button { font-weight: 600; }
+@keyframes appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .msg { animation: none; } }
+
+/* Rango */
+textarea {
+  font: 14px/1.4 var(--body);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 9px;
+  width: 100%;
+  resize: vertical;
+}
+.new-project .wide { flex: 1 1 100%; }
+.suggest { display: grid; gap: 4px; margin-top: 4px; padding: 6px 8px; background: var(--paper); border: 1px dashed var(--line); font-size: 13px; }
+.suggest .kind, .hints .kind { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.suggest button { justify-self: start; min-height: 32px; padding: 5px 10px; font-size: 13px; }
+.chip-button { min-height: 32px; padding: 5px 9px; font-size: 13px; font-weight: 500; text-align: left; }
+.known summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 4px 0; }
+.known .chips { padding-top: 6px; }
+.steps-list { list-style: decimal; padding-left: 20px; font-family: var(--body); font-size: 13px; max-height: 260px; overflow-y: auto; }
+.inspector .hints li > p, .inspector .hints li > ul { margin-top: 2px; }
+.inspector .verdict { font-size: 15px; }
+
+@media (max-width: 1040px) {
+  .editor { grid-template-columns: 220px minmax(0, 1fr); grid-template-areas: "toolbar toolbar" "palette canvas" "inspector inspector" "arduino arduino"; }
+  .arduino-body { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .editor { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "palette" "canvas" "inspector" "arduino"; }
+  .palette-items { max-height: 260px; }
+  .canvas-wrap { height: 460px; }
+}

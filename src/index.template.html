@@ -6,13 +6,19 @@
   <header class="top">
     <div class="brand">
       <p class="wordmark">Rangokit</p>
-      <p class="sheet-id">Práctica 01 · Rev. A</p>
+      <p class="sheet-id" id="sheet-id">Práctica 01 · Rev. A</p>
     </div>
-    <div class="goal">
+    <div class="goal" id="goal">
       <h1>Retorno automático con enclavamiento</h1>
       <p>Al pulsar S1, el cilindro 1A debe salir hasta 100 mm y regresar solo.</p>
     </div>
+    <nav class="views" aria-label="Secciones">
+      <button type="button" id="nav-practice" aria-pressed="true">Práctica guiada</button>
+      <button type="button" id="nav-projects" aria-pressed="false">Mis proyectos</button>
+    </nav>
   </header>
+
+  <div class="view" id="view-practice">
 
   <section class="faults" aria-label="Elegir una falla">
     <p class="label">Falla para probar</p>
@@ -82,10 +88,13 @@
       <ol class="log" id="log"></ol>
     </aside>
   </main>
+  </div>
+
+  <div class="view" id="view-editor" hidden></div>
 
   <footer>
     <p>Demo de concepto con una sola práctica. La física está simplificada: velocidad constante, sin caída de presión y con válvula de mando directo. Las pistas salen de reglas fijas y no usan IA. Revisa tu instalación real antes de energizarla.</p>
-    <p>Rangokit es código abierto bajo licencia AGPL-3.0.<!--__SOURCE__--> No guarda ni envía tus datos y funciona sin conexión.</p>
+    <p>Rangokit es código abierto bajo licencia AGPL-3.0.<!--__SOURCE__--> No envía tus datos y funciona sin conexión; solo se conecta a GitHub si pides buscar proyectos.</p>
   </footer>
 </div>
 <script>/*__SCRIPT__*/</script>
