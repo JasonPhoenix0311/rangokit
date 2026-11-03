@@ -1,0 +1,40 @@
+name: Falla real de laboratorio
+description: Una falla que viste en una práctica real, para convertirla en regla.
+labels: [falla-real]
+body:
+  - type: markdown
+    attributes:
+      value: No incluyas nombres, datos personales ni material de examen.
+  - type: textarea
+    id: practica
+    attributes:
+      label: Práctica
+      description: Enunciado y qué debía hacer el circuito.
+    validations:
+      required: true
+  - type: textarea
+    id: circuito
+    attributes:
+      label: Circuito
+      description: Diagrama, foto o lista de conexiones.
+    validations:
+      required: true
+  - type: textarea
+    id: sintoma
+    attributes:
+      label: Qué ocurrió
+      description: Lo que se observaba, sin la causa.
+    validations:
+      required: true
+  - type: textarea
+    id: causa
+    attributes:
+      label: Causa real
+      description: Qué estaba mal y cómo lo confirmaron.
+    validations:
+      required: true
+  - type: textarea
+    id: mediciones
+    attributes:
+      label: Mediciones
+      description: Lecturas de tensión o presión que ayudaron a encontrarla.

@@ -47,6 +47,14 @@ const CHAIN_Y1 = ['W5', 'K1b', 'W6', 'Y1c', 'W7'];
 const CHAIN_EXTEND = ['V0', 'H1', 'SP4', 'H2'];
 const CHAIN_RETRACT = ['V0', 'H1', 'SP2', 'H3'];
 
+const STAGE_CHAIN = {
+  k1: [ELEC, CHAIN_PRESS],
+  y1: [ELEC, CHAIN_Y1],
+  'air-ext': [AIR, CHAIN_EXTEND],
+  hold: [ELEC, CHAIN_HOLD],
+  'air-ret': [AIR, CHAIN_RETRACT],
+};
+
 export const CHECKS = [
   'Sale al pulsar S1',
   'Sigue saliendo al soltar S1',
@@ -54,12 +62,16 @@ export const CHECKS = [
   'Regresa solo a 0 mm',
 ];
 
-const STAGE_CHECK = { k1: 0, y1: 0, 'air-ext': 0, hold: 1, 's2-late': 2, 's2-early': 2, 'air-ret': 3 };
+const STAGE_CHECK = { k1: 0, 's2-rest': 0, y1: 0, 'air-ext': 0, hold: 1, 's2-late': 2, 's2-early': 2, 'air-ret': 3 };
 
 const STAGE_TEXT = {
   k1: {
     symptom: 'Al pulsar S1, K1 no energiza y el cilindro no se mueve.',
     hint: 'Sigue los 24 V desde el positivo hasta K1:A1 y luego de K1:A2 hasta 0 V. Busca el primer punto donde cambia la lectura.',
+  },
+  's2-rest': {
+    symptom: 'Al pulsar S1, K1 no energiza. S2 ya detecta el émbolo con el cilindro en reposo.',
+    hint: 'S2 abre su contacto antes de que el cilindro se mueva. Revisa en qué punto de la carrera está montado.',
   },
   y1: {
     symptom: 'K1 energiza, pero Y1 no recibe corriente y el cilindro no sale.',
@@ -98,6 +110,8 @@ export function createState(cfg = {}) {
     spoolTimer: 0,
     sensed: false,
     broken: new Set(cfg.broken ?? []),
+    // Componentes dañados que ninguna regla diagnostica. Sirven para probar el caso sin causa conocida.
+    damaged: new Set(cfg.damaged ?? []),
     s2pos: cfg.s2pos ?? SENSOR_HOME,
     supply: cfg.supply ?? true,
     events: [],
@@ -125,8 +139,8 @@ export function solve(s, override = {}) {
   const hot = reach(ELEC, closed, '+24');
   const gnd = reach(ELEC, closed, '0V');
   const air = reach(AIR, closed, 'src');
-  const k1Coil = hot.has('n5') && gnd.has('n6');
-  const y1Coil = hot.has('n9') && gnd.has('n10');
+  const k1Coil = hot.has('n5') && gnd.has('n6') && !s.damaged.has('K1c');
+  const y1Coil = hot.has('n9') && gnd.has('n10') && !s.damaged.has('Y1c');
   const current = new Set();
   const addPath = (coil, a, b) => {
     current.add(coil);
@@ -215,6 +229,8 @@ function finding(stage, edge, s, override = {}) {
       fix: { kind: 'reconnect', id: edge.id },
     };
   }
+  if (edge.id === 'S2') return sensorFinding('s2-rest', s, s.x);
+  if (edge.id !== 'V0') return undetermined(stage, s, override);
   return {
     ...base,
     target: 'V0',
@@ -239,8 +255,45 @@ function sensorFinding(stage, s, xMax) {
   };
 }
 
+/**
+ * La etapa falló, pero ninguna regla explica por qué. En lugar de adivinar,
+ * se dice y se listan los puntos de la cadena donde conviene medir.
+ */
+function undetermined(stage, s, override = {}) {
+  const [edges, chain] = STAGE_CHAIN[stage];
+  const air = edges === AIR;
+  const sol = solve(s, override);
+  const points = [];
+  for (const id of chain) {
+    const edge = edges.find((candidate) => candidate.id === id);
+    if (!edge.from) continue;
+    for (const [label, node] of [[edge.from, edge.a], [edge.to, edge.b]]) {
+      const line = `${label}: ${reading(sol, node, air ? 'air' : 'elec')}`;
+      if (!points.includes(line)) points.push(line);
+    }
+  }
+  return {
+    stage,
+    failedCheck: STAGE_CHECK[stage],
+    symptom: STAGE_TEXT[stage].symptom,
+    undetermined: true,
+    hint: 'El simulador no pudo determinar la causa con las reglas de esta práctica. No hay un cable ni una manguera suelta en este tramo.',
+    measure: air
+      ? 'Mide la presión en cada punto del tramo y busca dónde deja de haber 6 bar. Si todo marca 6 bar, revisa el componente que recibe el aire.'
+      : 'Mide la tensión en cada punto del tramo y busca dónde cambia la lectura. Si llegan 24 V y 0 V a la bobina, revisa la bobina.',
+    evidence: points,
+    endT: s.t + 0.6,
+  };
+}
+
 const locate = (edges, chain, s, override = {}) =>
   firstBreak(edges, chain, (edge) => isClosed(edge, s, override));
+
+const check = (stage, s, override = {}) => {
+  const [edges, chain] = STAGE_CHAIN[stage];
+  const edge = locate(edges, chain, s, override);
+  return edge ? finding(stage, edge, s, override) : undetermined(stage, s, override);
+};
 
 /**
  * Ejecuta un ciclo completo y compara el resultado con lo que pide la práctica.
@@ -252,28 +305,15 @@ export function diagnose(cfg = {}) {
   s.s1 = true;
   runTo(s, PRESS_AT + 0.2);
 
-  let sol = solve(s);
-  if (!sol.k1Coil) {
-    const edge = locate(ELEC, CHAIN_PRESS, s);
-    if (edge) return finding('k1', edge, s);
-  }
-  if (!sol.y1Coil) {
-    const edge = locate(ELEC, CHAIN_Y1, s);
-    if (edge) return finding('y1', edge, s);
-  }
-  if (s.x < 1) {
-    const edge = locate(AIR, CHAIN_EXTEND, s);
-    if (edge) return finding('air-ext', edge, s);
-  }
+  const sol = solve(s);
+  if (!sol.k1Coil) return check('k1', s);
+  if (!sol.y1Coil) return check('y1', s);
+  if (s.x < 1) return check('air-ext', s);
 
   runTo(s, RELEASE_AT);
   s.s1 = false;
   runTo(s, RELEASE_AT + 0.15);
-  if (!s.k1) {
-    const override = { K1a: true };
-    const edge = locate(ELEC, CHAIN_HOLD, s, override);
-    if (edge) return finding('hold', edge, s, override);
-  }
+  if (!s.k1) return check('hold', s, { K1a: true });
 
   let xMax = s.x;
   let everSensed = s.sensed;
@@ -285,10 +325,7 @@ export function diagnose(cfg = {}) {
 
   if (!everSensed) return sensorFinding('s2-late', s, xMax);
   if (xMax < STROKE - 2) return sensorFinding('s2-early', s, xMax);
-  if (s.x > 1) {
-    const edge = locate(AIR, CHAIN_RETRACT, s);
-    if (edge) return finding('air-ret', edge, s);
-  }
+  if (s.x > 1) return check('air-ret', s);
   const done = s.events.findLast((event) => event.text.includes('regresa a 0'));
   return { ok: true, stroke: Math.round(xMax), cycle: (done?.t ?? s.t) - PRESS_AT, endT: (done?.t ?? s.t) + 0.3 };
 }

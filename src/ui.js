@@ -273,7 +273,15 @@ function renderDiagnosis() {
 
   const box = $('finding');
   box.hidden = !result || result.ok;
-  if (!box.hidden) {
+  if (!box.hidden && result.undetermined) {
+    $('symptom').textContent = result.symptom;
+    $('hints').innerHTML = [['Sin causa', result.hint], ['Qué medir', result.measure]]
+      .map(([kind, text], index) => `<li><span class="kind">${kind}</span><span>${text}</span>${index === 1
+        ? `<span class="evidence">${result.evidence.join(' · ')}</span>` : ''}</li>`).join('');
+    $('more').hidden = true;
+    $('fix').hidden = true;
+    $('used').textContent = '';
+  } else if (!box.hidden) {
     $('symptom').textContent = result.symptom;
     const steps = [result.hint, result.component, result.correction];
     $('hints').innerHTML = steps.map((text, index) => {

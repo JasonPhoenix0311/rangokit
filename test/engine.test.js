@@ -57,3 +57,24 @@ test('corregir la falla reportada deja el ciclo sano', () => {
   const found = diagnose({ s2pos: 112 });
   assert.equal(diagnose({ s2pos: found.fix.pos }).ok, true);
 });
+
+test('un sensor que detecta en reposo apunta a S2, no a la llave de aire', () => {
+  const result = diagnose({ s2pos: 2 });
+  assert.equal(result.stage, 's2-rest');
+  assert.equal(result.target, 'S2');
+  assert.equal(result.failedCheck, 0);
+  assert.equal(diagnose({ s2pos: result.fix.pos }).ok, true);
+});
+
+for (const [coil, stage, point] of [['K1c', 'k1', 'K1:A1: 24 V'], ['Y1c', 'y1', 'Y1:+: 24 V']]) {
+  test(`sin regla para la bobina ${coil} lo dice y sugiere qué medir`, () => {
+    const result = diagnose({ damaged: [coil] });
+    assert.equal(result.ok, undefined);
+    assert.equal(result.stage, stage);
+    assert.equal(result.undetermined, true);
+    assert.equal(result.target, undefined);
+    assert.equal(result.fix, undefined);
+    assert.ok(result.symptom && result.hint && result.measure);
+    assert.ok(result.evidence.includes(point), result.evidence.join(' | '));
+  });
+}

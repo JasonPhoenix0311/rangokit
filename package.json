@@ -5,6 +5,12 @@
   "type": "module",
   "private": true,
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JasonPhoenix0311/rangokit.git"
+  },
+  "homepage": "https://jasonphoenix0311.github.io/rangokit/",
+  "bugs": "https://github.com/JasonPhoenix0311/rangokit/issues",
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build.mjs"

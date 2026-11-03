@@ -13,10 +13,23 @@ Rangokit no solo muestra por dónde pasan la corriente y el aire. Prueba el circ
 - Animación de corriente y aire, con modo paso a paso.
 - Cualquier cable o manguera se puede soltar para probar el diagnóstico.
 - Pistas generadas con reglas verificables. Esta versión no usa IA.
+- Si las reglas no explican la falla, lo dice y sugiere qué medir.
 
 ## Uso
 
-Abre `dist/index.html` en un navegador. No necesita instalación.
+Úsalo en línea en **https://jasonphoenix0311.github.io/rangokit/**, o abre `dist/index.html` en un navegador. No necesita instalación ni conexión.
+
+La página no pide cuentas, no guarda tu progreso, no envía datos a ningún servidor y no descarga nada de fuera.
+
+### Publicar tu propia copia
+
+Cualquier escuela o docente puede alojar su propia copia:
+
+1. Haz un fork del repositorio en GitHub.
+2. En **Settings → Pages**, elige **GitHub Actions** como origen.
+3. Cada cambio en `main` corre las pruebas y publica `dist/index.html`.
+
+También puedes subir `dist/index.html` a cualquier servidor web. Si lo modificas y lo ofreces en línea, la AGPL te pide publicar tu código. Para eso pon la dirección de tu repositorio en el campo `repository` de `package.json`, y el build la enlaza en el pie de página.
 
 Para modificarlo, instala Node.js 20 o superior:
 
@@ -41,8 +54,13 @@ npm run build
 2. La práctica define el comportamiento esperado y una cadena de elementos por cada etapa.
 3. Se ejecuta un ciclo completo.
 4. En la primera etapa que no cumple, el motor recorre la cadena hasta encontrar el primer elemento abierto.
+5. Si la cadena está completa y la etapa aun así falla, no adivina: reporta que no pudo determinar la causa y muestra las lecturas de cada punto del tramo.
 
 La simulación usa velocidad constante, sin caída de presión y con válvula de mando directo.
+
+## Contribuir
+
+Las prácticas y fallas reales de laboratorio son lo más valioso. Lee [CONTRIBUTING.md](CONTRIBUTING.md) para saber cómo reportarlas o agregarlas. Los problemas de seguridad se reportan en privado, como explica [SECURITY.md](SECURITY.md). Al participar aceptas el [código de conducta](CODE_OF_CONDUCT.md).
 
 ## Licencia
 

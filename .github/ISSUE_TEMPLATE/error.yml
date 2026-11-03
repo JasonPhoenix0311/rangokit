@@ -1,0 +1,28 @@
+name: Error del simulador
+description: El simulador hizo algo incorrecto o dio un diagnóstico equivocado.
+labels: [error]
+body:
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Pasos para reproducirlo
+      description: Falla elegida, cables o mangueras sueltos, posición de S2.
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Qué esperabas
+    validations:
+      required: true
+  - type: textarea
+    id: ocurrio
+    attributes:
+      label: Qué ocurrió
+      description: Copia el diagnóstico y las pistas que mostró.
+    validations:
+      required: true
+  - type: input
+    id: navegador
+    attributes:
+      label: Navegador y dispositivo

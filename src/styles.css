@@ -13,9 +13,9 @@
   --ok: #18774a;
   --push: #1c8a50;
   --on-ink: #f7faf6;
-  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
-  --body: "Barlow", "Segoe UI", system-ui, sans-serif;
-  --mono: "B612 Mono", ui-monospace, Menlo, monospace;
+  --display: "Bahnschrift SemiCondensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, "Roboto Mono", monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -211,6 +211,7 @@ svg { display: block; width: 100%; height: auto; }
 .legend .k-fault { border-color: var(--fault); }
 
 footer { font-size: 13px; color: var(--muted); max-width: 86ch; display: grid; gap: 3px; }
+footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* Símbolos */
 .sym, .sym line, .sym path, .sym rect, .sym circle, .sym polygon { stroke: var(--ink); stroke-width: 2; fill: none; }
