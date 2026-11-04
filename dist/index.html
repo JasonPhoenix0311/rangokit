@@ -74,6 +74,13 @@ b { font-weight: 700; }
 .top { display: flex; flex-wrap: wrap; gap: 8px 26px; align-items: end; }
 .wordmark { font-family: var(--display); font-weight: 700; font-size: 34px; line-height: 1; letter-spacing: .01em; }
 .sheet-id { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+.home-link {
+  margin-left: auto;
+  display: inline-flex; align-items: center; min-height: 38px; padding: 9px 12px;
+  font: 600 14px/1.1 var(--body); color: var(--ink); text-decoration: none;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--sheet);
+}
+.home-link:hover { border-color: var(--ink); }
 .goal { min-width: 0; flex: 1 1 300px; }
 .goal h1 { font-family: var(--display); font-weight: 600; font-size: 23px; line-height: 1.1; text-wrap: balance; }
 .goal p { color: var(--muted); }
@@ -557,6 +564,7 @@ textarea {
       <button type="button" id="nav-practice" aria-pressed="true">Práctica guiada</button>
       <button type="button" id="nav-projects" aria-pressed="false">Mis proyectos</button>
     </nav>
+    <a class="home-link" href="https://ddtec.com.mx/" title="Ir a la página de Phoenix Office">← Phoenix Office</a>
   </header>
 
   <div class="view" id="view-practice">
