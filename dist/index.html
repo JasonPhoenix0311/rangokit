@@ -74,8 +74,8 @@ b { font-weight: 700; }
 .top { display: flex; flex-wrap: wrap; gap: 8px 26px; align-items: end; }
 .wordmark { font-family: var(--display); font-weight: 700; font-size: 34px; line-height: 1; letter-spacing: .01em; }
 .sheet-id { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+.top-links { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
 .home-link {
-  margin-left: auto;
   display: inline-flex; align-items: center; min-height: 38px; padding: 9px 12px;
   font: 600 14px/1.1 var(--body); color: var(--ink); text-decoration: none;
   border: 1px solid var(--line); border-radius: 4px; background: var(--sheet);
@@ -564,7 +564,10 @@ textarea {
       <button type="button" id="nav-practice" aria-pressed="true">Práctica guiada</button>
       <button type="button" id="nav-projects" aria-pressed="false">Mis proyectos</button>
     </nav>
-    <a class="home-link" href="https://ddtec.com.mx/" title="Ir a la página de Phoenix Office">← Phoenix Office</a>
+    <div class="top-links">
+      <a class="home-link" href="planes/index.html">Planes</a>
+      <a class="home-link" href="https://ddtec.com.mx/" title="Ir a la página de Phoenix Office">← Phoenix Office</a>
+    </div>
   </header>
 
   <div class="view" id="view-practice">
@@ -649,6 +652,149 @@ textarea {
 <script>
 (() => {
 const modules = {};
+modules['src/plans.js'] = (() => {
+// Planes de Rangokit: configuración central y consulta del plan de una cuenta.
+// Los precios están sujetos a validación con estudiantes, docentes y escuelas.
+// Este módulo no cobra, no pide datos de pago y no se conecta a ningún servicio.
+
+const PRICING_NOTICE = 'Precios sujetos a validación. Aún no se realizan cobros.';
+
+// Valor del campo `plan` de una cuenta nueva o migrada. Equivale al plan gratuito de su rol.
+const DEFAULT_PLAN = 'gratis';
+
+// Versión del registro de cuenta que deja `migrateAccount`.
+const ACCOUNT_VERSION = 1;
+
+// Funciones. `available: false` se muestra como "Próximamente" y nunca se habilita.
+const FEATURES = Object.freeze({
+  simulador: { name: 'Simulador de electroneumática', available: true },
+  practicas: { name: 'Prácticas guiadas', available: true },
+  'pistas-reglas': { name: 'Pistas graduales por reglas', available: true },
+  'proyectos-libres': { name: 'Editor de proyectos libres (beta)', available: true },
+  'practica-asignada': { name: 'Hacer y entregar las prácticas que deja tu docente', available: false },
+  'tutor-ia': { name: 'Tutor con IA que explica los hallazgos del simulador', available: false },
+  reportes: { name: 'Reportes de tu avance', available: false },
+  'un-grupo': { name: '1 grupo', available: false },
+  'asignar-practicas': { name: 'Asignar prácticas', available: false },
+  'resultados-basicos': { name: 'Resultados básicos del grupo', available: false },
+  'grupos-ilimitados': { name: 'Grupos ilimitados', available: false },
+  'fallas-por-alumno': { name: 'Fallas distintas por alumno', available: false },
+  'exportar-calificaciones': { name: 'Exportar calificaciones', available: false },
+  'banco-practicas': { name: 'Banco de prácticas', available: false },
+  administracion: { name: 'Administración del plantel', available: false },
+  'moodle-classroom': { name: 'Integración con Moodle o Classroom', available: false },
+  capacitacion: { name: 'Capacitación docente', available: false },
+  soporte: { name: 'Soporte', available: false },
+  factura: { name: 'Factura', available: false },
+  talleres: { name: 'Talleres presenciales o en línea', available: false },
+});
+
+// Siempre gratis, con o sin cuenta y con cualquier plan. Incluye hacer y entregar
+// lo que deja un docente: ningún estudiante paga por una práctica asignada.
+const ALWAYS_FREE = Object.freeze(['simulador', 'practicas', 'pistas-reglas', 'proyectos-libres', 'practica-asignada']);
+
+const STUDENT_FREE = ['simulador', 'practicas', 'pistas-reglas', 'proyectos-libres', 'practica-asignada'];
+const TEACHER_FREE = [...STUDENT_FREE, 'un-grupo', 'asignar-practicas', 'resultados-basicos'];
+
+// price: monto en pesos mexicanos; priceMax para un rango; null cuando se cotiza.
+// period: 'semestre', 'año' o null. unit: a qué se aplica el precio, si no es por persona.
+// base: plan cuyas funciones incluye; la página muestra "Todo lo de …" y solo lo nuevo.
+const PLANS = Object.freeze([
+  {
+    id: 'estudiante', role: 'estudiante', name: 'Estudiante', price: 0, period: null,
+    summary: 'Simulador, prácticas y pistas por reglas. No requiere cuenta.',
+    requiresAccount: false, features: STUDENT_FREE,
+  },
+  {
+    id: 'estudiante-plus', role: 'estudiante', name: 'Estudiante Plus', price: 99, period: 'semestre', base: 'estudiante',
+    summary: 'Todo lo de Estudiante, más tutor con IA y reportes.',
+    requiresAccount: true, features: [...STUDENT_FREE, 'tutor-ia', 'reportes'],
+  },
+  {
+    id: 'docente', role: 'docente', name: 'Docente', price: 0, period: null, base: 'estudiante',
+    summary: 'Un grupo, asignar prácticas y resultados básicos.',
+    requiresAccount: true, features: TEACHER_FREE,
+  },
+  {
+    id: 'docente-pro', role: 'docente', name: 'Docente Pro', price: 690, period: 'año', base: 'docente',
+    summary: 'Grupos ilimitados, fallas por alumno, exportar calificaciones y banco de prácticas.',
+    requiresAccount: true,
+    features: [...TEACHER_FREE, 'grupos-ilimitados', 'fallas-por-alumno', 'exportar-calificaciones', 'banco-practicas'],
+  },
+  {
+    id: 'escuela', role: 'escuela', name: 'Escuela', price: 15000, priceMax: 30000, period: 'año', unit: 'plantel',
+    base: 'docente-pro',
+    summary: 'Administración, Moodle o Classroom, capacitación, soporte y factura.',
+    requiresAccount: true,
+    features: [...TEACHER_FREE, 'grupos-ilimitados', 'fallas-por-alumno', 'exportar-calificaciones', 'banco-practicas',
+      'administracion', 'moodle-classroom', 'capacitacion', 'soporte', 'factura'],
+  },
+  {
+    id: 'capacitacion', role: 'servicio', name: 'Capacitación', price: null, period: null, unit: 'taller',
+    summary: 'Talleres para docentes y estudiantes. Precio por taller.',
+    requiresAccount: false, features: ['talleres'],
+  },
+].map((plan) => Object.freeze({ ...plan, features: Object.freeze(plan.features) })));
+
+const BY_ID = new Map(PLANS.map((plan) => [plan.id, plan]));
+
+function getPlan(id) {
+  return BY_ID.get(id) ?? null;
+}
+
+const money = (value) => `MX$${value.toLocaleString('es-MX')}`;
+
+function formatPrice(plan) {
+  if (plan.price === null) return plan.unit ? `Precio por ${plan.unit}` : 'Precio a cotizar';
+  if (plan.price === 0) return 'Gratis';
+  const amount = plan.priceMax ? `${money(plan.price)} a ${money(plan.priceMax)}` : money(plan.price);
+  const period = plan.period === 'año' ? ' al año' : plan.period ? ` por ${plan.period}` : '';
+  return `${amount}${period}${plan.unit ? ` por ${plan.unit}` : ''}`;
+}
+
+// Plan gratuito que corresponde a una cuenta según su rol.
+function freePlanFor(account) {
+  return account?.role === 'docente' ? BY_ID.get('docente') : BY_ID.get('estudiante');
+}
+
+// Plan efectivo de una cuenta. Sin cuenta, con plan "gratis", vacío o desconocido,
+// devuelve el plan gratuito de su rol. Nunca falla ni devuelve null.
+function planOf(account) {
+  const plan = getPlan(account?.plan);
+  return plan && plan.role !== 'servicio' ? plan : freePlanFor(account);
+}
+
+// ¿El plan de la cuenta incluye la función? Las funciones de ALWAYS_FREE siempre se incluyen.
+function includes(account, feature) {
+  if (!(feature in FEATURES)) return false;
+  return ALWAYS_FREE.includes(feature) || planOf(account).features.includes(feature);
+}
+
+// ¿Se puede usar hoy? Además de estar incluida, la función debe existir ya en Rangokit.
+function canUse(account, feature) {
+  return includes(account, feature) && FEATURES[feature].available;
+}
+
+// Migración: agrega el campo `plan` sin tocar nada más. No borra cuentas ni cambia
+// un plan ya asignado. Es idempotente y no modifica el objeto original.
+function migrateAccount(account) {
+  if (!account || typeof account !== 'object' || Array.isArray(account)) return account;
+  const plan = typeof account.plan === 'string' && account.plan.trim() ? account.plan : DEFAULT_PLAN;
+  return { ...account, plan, accountVersion: Math.max(ACCOUNT_VERSION, Number(account.accountVersion) || 0) };
+}
+
+// Acepta una lista de cuentas o un objeto { id: cuenta }. Cualquier otro valor se
+// devuelve igual, para no perder datos de un formato que no conoce.
+function migrateAccounts(accounts) {
+  if (Array.isArray(accounts)) return accounts.map(migrateAccount);
+  if (accounts && typeof accounts === 'object') {
+    return Object.fromEntries(Object.entries(accounts).map(([id, account]) => [id, migrateAccount(account)]));
+  }
+  return accounts;
+}
+
+return { PRICING_NOTICE, DEFAULT_PLAN, ACCOUNT_VERSION, FEATURES, ALWAYS_FREE, PLANS, getPlan, formatPrice, planOf, includes, canUse, migrateAccount, migrateAccounts };
+})();
 modules['src/engine.js'] = (() => {
 // Motor genérico: trata cables, contactos y mangueras como aristas de un grafo.
 // No conoce ninguna práctica. Las prácticas definen sus aristas en src/practices.

@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planes · Rangokit</title>
+<meta name="description" content="Planes de Rangokit para estudiantes, docentes y escuelas. Precios sujetos a validación. Aún no se realizan cobros.">
+<style>
+/* Layout: plano técnico en dos hojas, tablero de mando debajo y diagnóstico en la columna derecha. */
+:root {
+  --paper: #e9eeea;
+  --sheet: #f7faf6;
+  --grid: #dbe4dd;
+  --ink: #17231f;
+  --muted: #55645e;
+  --line: #a9b8b0;
+  --electric: #d9400b;
+  --volt: #b98300;
+  --air: #0b78a3;
+  --fault: #bf0f7a;
+  --ok: #18774a;
+  --push: #1c8a50;
+  --on-ink: #f7faf6;
+  --display: "Bahnschrift SemiCondensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, "Roboto Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f1615;
+    --sheet: #16201e;
+    --grid: #22302d;
+    --ink: #e5eee9;
+    --muted: #9aaba4;
+    --line: #52645d;
+    --electric: #ff7c45;
+    --volt: #e5b23c;
+    --air: #4cc2e8;
+    --fault: #ff62ba;
+    --ok: #5ccf96;
+    --push: #2bab68;
+    --on-ink: #0f1615;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f1615;
+  --sheet: #16201e;
+  --grid: #22302d;
+  --ink: #e5eee9;
+  --muted: #9aaba4;
+  --line: #52645d;
+  --electric: #ff7c45;
+  --volt: #e5b23c;
+  --air: #4cc2e8;
+  --fault: #ff62ba;
+  --ok: #5ccf96;
+  --push: #2bab68;
+  --on-ink: #0f1615;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; }
+h1, h2, p, ul, ol, figure { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+b { font-weight: 700; }
+
+.app {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding-block: 18px 28px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 14px;
+}
+
+.top { display: flex; flex-wrap: wrap; gap: 8px 26px; align-items: end; }
+.wordmark { font-family: var(--display); font-weight: 700; font-size: 34px; line-height: 1; letter-spacing: .01em; }
+.sheet-id { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+.top-links { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.home-link {
+  display: inline-flex; align-items: center; min-height: 38px; padding: 9px 12px;
+  font: 600 14px/1.1 var(--body); color: var(--ink); text-decoration: none;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--sheet);
+}
+.home-link:hover { border-color: var(--ink); }
+.goal { min-width: 0; flex: 1 1 300px; }
+.goal h1 { font-family: var(--display); font-weight: 600; font-size: 23px; line-height: 1.1; text-wrap: balance; }
+.goal p { color: var(--muted); }
+
+.faults { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.label { font-family: var(--mono); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tip { color: var(--muted); font-size: 13px; }
+
+button {
+  font: 600 14px/1.1 var(--body);
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 12px;
+  min-height: 38px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--ink); }
+button[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+button.primary { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--fault); outline-offset: 2px; }
+
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.drawings {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  grid-template-areas: "pneu ladder" "strip strip" "legend legend";
+  min-width: 0;
+}
+.pneu { grid-area: pneu; }
+.ladder { grid-area: ladder; }
+.strip { grid-area: strip; }
+
+.sheet {
+  min-width: 0;
+  background-color: var(--sheet);
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+  border: 1px solid var(--line);
+}
+figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--sheet);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 18px;
+}
+.read { display: flex; gap: 12px; font-family: var(--mono); font-size: 12px; font-weight: 400; align-items: center; font-variant-numeric: tabular-nums; }
+.svgwrap { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  align-items: center;
+  background: var(--sheet);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+}
+.push {
+  flex: none;
+  width: 66px;
+  height: 66px;
+  padding: 7px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--sheet);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.push span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--push);
+  color: #fff;
+  font-family: var(--mono);
+  font-weight: 700;
+  transition: transform .06s;
+}
+.push.down span { transform: scale(.88); }
+.runs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toggle { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; min-height: 38px; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--ink); }
+.lamps { display: flex; gap: 6px; }
+.lamp { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); padding: 5px 8px; border-radius: 3px; color: var(--muted); }
+.lamp.on { background: var(--electric); border-color: var(--electric); color: var(--on-ink); }
+.slider { flex: 1 1 190px; min-width: 0; display: grid; gap: 2px; }
+.slider label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
+.slider b { font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.slider input { width: 100%; accent-color: var(--ink); }
+
+.diag { min-width: 0; background: var(--sheet); border: 1px solid var(--line); padding: 12px 14px 14px; display: grid; gap: 10px; }
+.diag h2 { font-family: var(--display); font-weight: 600; font-size: 18px; }
+.diag .sub { padding-top: 8px; border-top: 1px solid var(--line); }
+.verdict { font-weight: 600; }
+.verdict.pass { color: var(--ok); }
+.verdict.fail { color: var(--fault); }
+.checks { display: grid; gap: 3px; font-size: 14px; }
+.checks li { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.mark { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.mark.pass { color: var(--ok); }
+.mark.fail { color: var(--fault); font-weight: 700; }
+
+#finding:not([hidden]) { display: grid; gap: 9px; }
+.symptom { padding-left: 10px; border-left: 3px solid var(--fault); }
+.hints { display: grid; gap: 8px; }
+.hints li { display: grid; gap: 1px; }
+.hints .kind { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.hints li.locked { color: var(--muted); }
+.evidence { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.hint-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.used { font-size: 13px; color: var(--muted); }
+
+.log { display: grid; gap: 3px; font-size: 13px; }
+.log li { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 8px; }
+.log time { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.log .empty { display: block; color: var(--muted); }
+
+.legend { grid-area: legend; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend li { display: inline-flex; gap: 6px; align-items: center; }
+.legend i { width: 24px; height: 0; border-top: 3px solid; }
+.legend .k-flow { border-color: var(--electric); }
+.legend .k-volt { border-color: var(--volt); }
+.legend .k-air { border-color: var(--air); }
+.legend .k-fault { border-color: var(--fault); }
+
+footer { font-size: 13px; color: var(--muted); max-width: 86ch; display: grid; gap: 3px; }
+footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Símbolos */
+.sym, .sym line, .sym path, .sym rect, .sym circle, .sym polygon { stroke: var(--ink); stroke-width: 2; fill: none; }
+.sym .filled { fill: var(--ink); stroke: none; }
+.tag { font-family: var(--mono); font-size: 14px; fill: var(--ink); font-weight: 700; }
+.sm { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+.rail { stroke: var(--ink); stroke-width: 3; }
+.rail.plus { stroke: var(--volt); }
+.net { outline: none; cursor: pointer; }
+.net .hit { stroke: transparent; stroke-width: 20; fill: none; pointer-events: stroke; }
+.net .base { stroke: var(--line); stroke-width: 3; fill: none; }
+.net .pulse { stroke: none; stroke-width: 3; fill: none; }
+.net:hover .base, .net:focus-visible .base { stroke: var(--ink); stroke-width: 4; }
+.net.on .base { stroke: var(--volt); }
+.net.pressed .base { stroke: var(--air); }
+.net.flow .base { stroke: var(--electric); stroke-opacity: .3; }
+.net.flow .pulse { stroke: var(--electric); stroke-dasharray: 10 8; animation: run .55s linear infinite; }
+.net.pressed.flow .base { stroke: var(--air); }
+.net.pressed.flow .pulse { stroke: var(--on-ink); stroke-width: 2; }
+.net.vent .pulse { stroke: var(--air); stroke-width: 2; stroke-dasharray: 3 7; animation: run .7s linear infinite reverse; }
+.net.cut .base { stroke: var(--fault); stroke-dasharray: 3 8; stroke-width: 3; }
+.net.fault .base { stroke: var(--fault); stroke-width: 5; stroke-opacity: 1; }
+.net.fault .hit { stroke: var(--fault); stroke-opacity: .14; }
+@keyframes run { to { stroke-dashoffset: -18; } }
+
+.chamber { fill: var(--air); opacity: 0; stroke: none; }
+.chamber.on { opacity: .28; }
+.piston { fill: var(--ink); }
+.rod { fill: var(--line); stroke: var(--ink); stroke-width: 1.5; }
+.valve { transition: transform .12s ease-out; }
+.valve.shift { transform: translateX(70px); }
+.coil { fill: var(--sheet); stroke: var(--ink); stroke-width: 2; }
+.coil.on { fill: var(--electric); }
+.blade { stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round; }
+.sensor rect { fill: var(--sheet); stroke: var(--ink); stroke-width: 2; }
+.sensor.on rect { fill: var(--electric); }
+.sensor.fault rect { stroke: var(--fault); stroke-width: 4; }
+.sensor text { fill: var(--ink); }
+.feed { stroke: var(--air); stroke-width: 3; fill: none; }
+.tap { cursor: pointer; outline: none; }
+.tap .bow { fill: var(--air); stroke: var(--ink); stroke-width: 2; }
+.tap.closed .bow { fill: var(--sheet); }
+.tap.fault .bow { stroke: var(--fault); stroke-width: 4; }
+.tap .hit { fill: transparent; stroke: none; }
+.tap:focus-visible .bow { stroke: var(--fault); stroke-width: 4; }
+
+@media (max-width: 1040px) {
+  .bench { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .drawings { grid-template-columns: minmax(0, 1fr); grid-template-areas: "pneu" "strip" "ladder" "legend"; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .net.flow .pulse, .net.vent .pulse { animation: none; stroke-dasharray: none; }
+  .valve { transition: none; }
+}
+
+/* Página /planes. Reutiliza los colores y la tipografía de styles.css. */
+.plans-page { max-width: 1180px; }
+.notice {
+  border: 1px solid var(--volt); border-left-width: 4px; border-radius: 4px;
+  background: var(--sheet); padding: 10px 14px; font-size: 15px;
+}
+.plans { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.plan {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--sheet); border: 1px solid var(--line); border-radius: 4px; padding: 16px;
+}
+.plan.free { border-color: var(--ok); }
+.plan h2, .promise h2 { font-family: var(--display); font-weight: 600; font-size: 22px; line-height: 1.1; }
+.plan .price { font-family: var(--mono); font-size: 15px; font-weight: 700; }
+.plan.free .price { color: var(--ok); }
+.plan .summary { color: var(--muted); }
+.plan .features { display: grid; align-content: start; gap: 5px; flex: 1; padding-top: 6px; border-top: 1px solid var(--grid); font-size: 14px; }
+.plan .features li { padding-left: 18px; position: relative; }
+.plan .features li::before { position: absolute; left: 0; font-weight: 700; }
+.plan .features li.ready::before { content: "✓"; color: var(--ok); }
+.plan .features li.later { color: var(--muted); }
+.plan .features li.later::before { content: "·"; }
+.soon {
+  display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 3px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--volt); border: 1px solid var(--volt);
+}
+.plan .account { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.promise { display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<div class="app plans-page">
+  <header class="top">
+    <div class="brand">
+      <p class="wordmark">Rangokit</p>
+      <p class="sheet-id">Planes</p>
+    </div>
+    <div class="goal">
+      <h1>Planes para estudiantes, docentes y escuelas</h1>
+      <p>El simulador y las pistas por reglas siguen gratis y sin cuenta.</p>
+    </div>
+    <div class="top-links">
+      <a class="home-link" href="../index.html">← Volver al simulador</a>
+    </div>
+  </header>
+
+  <p class="notice" role="note"><b>Aviso:</b> Precios sujetos a validación. Aún no se realizan cobros.</p>
+
+  <section class="plans" aria-label="Planes">
+    <article class="plan free" id="plan-estudiante">
+  <h2>Estudiante</h2>
+  <p class="price">Gratis</p>
+  <p class="summary">Simulador, prácticas y pistas por reglas. No requiere cuenta.</p>
+  <ul class="features">
+    <li class="ready">Simulador de electroneumática</li>
+    <li class="ready">Prácticas guiadas</li>
+    <li class="ready">Pistas graduales por reglas</li>
+    <li class="ready">Editor de proyectos libres (beta)</li>
+    <li class="later">Hacer y entregar las prácticas que deja tu docente <span class="soon">Próximamente</span></li>
+  </ul>
+  <p class="account">No requiere cuenta</p>
+</article>
+    <article class="plan" id="plan-estudiante-plus">
+  <h2>Estudiante Plus</h2>
+  <p class="price">MX$99 por semestre</p>
+  <p class="summary">Todo lo de Estudiante, más tutor con IA y reportes.</p>
+  <ul class="features">
+    <li class="ready">Todo lo de Estudiante, más:</li>
+    <li class="later">Tutor con IA que explica los hallazgos del simulador <span class="soon">Próximamente</span></li>
+    <li class="later">Reportes de tu avance <span class="soon">Próximamente</span></li>
+  </ul>
+  <p class="account">Requiere cuenta</p>
+</article>
+    <article class="plan free" id="plan-docente">
+  <h2>Docente</h2>
+  <p class="price">Gratis</p>
+  <p class="summary">Un grupo, asignar prácticas y resultados básicos.</p>
+  <ul class="features">
+    <li class="ready">Todo lo de Estudiante, más:</li>
+    <li class="later">1 grupo <span class="soon">Próximamente</span></li>
+    <li class="later">Asignar prácticas <span class="soon">Próximamente</span></li>
+    <li class="later">Resultados básicos del grupo <span class="soon">Próximamente</span></li>
+  </ul>
+  <p class="account">Requiere cuenta</p>
+</article>
+    <article class="plan" id="plan-docente-pro">
+  <h2>Docente Pro</h2>
+  <p class="price">MX$690 al año</p>
+  <p class="summary">Grupos ilimitados, fallas por alumno, exportar calificaciones y banco de prácticas.</p>
+  <ul class="features">
+    <li class="ready">Todo lo de Docente, más:</li>
+    <li class="later">Grupos ilimitados <span class="soon">Próximamente</span></li>
+    <li class="later">Fallas distintas por alumno <span class="soon">Próximamente</span></li>
+    <li class="later">Exportar calificaciones <span class="soon">Próximamente</span></li>
+    <li class="later">Banco de prácticas <span class="soon">Próximamente</span></li>
+  </ul>
+  <p class="account">Requiere cuenta</p>
+</article>
+    <article class="plan" id="plan-escuela">
+  <h2>Escuela</h2>
+  <p class="price">MX$15,000 a MX$30,000 al año por plantel</p>
+  <p class="summary">Administración, Moodle o Classroom, capacitación, soporte y factura.</p>
+  <ul class="features">
+    <li class="ready">Todo lo de Docente Pro, más:</li>
+    <li class="later">Administración del plantel <span class="soon">Próximamente</span></li>
+    <li class="later">Integración con Moodle o Classroom <span class="soon">Próximamente</span></li>
+    <li class="later">Capacitación docente <span class="soon">Próximamente</span></li>
+    <li class="later">Soporte <span class="soon">Próximamente</span></li>
+    <li class="later">Factura <span class="soon">Próximamente</span></li>
+  </ul>
+  <p class="account">Requiere cuenta</p>
+</article>
+    <article class="plan" id="plan-capacitacion">
+  <h2>Capacitación</h2>
+  <p class="price">Precio por taller</p>
+  <p class="summary">Talleres para docentes y estudiantes. Precio por taller.</p>
+  <ul class="features">
+    <li class="later">Talleres presenciales o en línea <span class="soon">Próximamente</span></li>
+  </ul>
+  <p class="account">No requiere cuenta</p>
+</article>
+  </section>
+
+  <section class="promise" aria-label="Lo que siempre es gratis">
+    <h2>Siempre gratis</h2>
+    <p>Con o sin cuenta, y con cualquier plan: simulador de electroneumática, prácticas guiadas, pistas graduales por reglas, editor de proyectos libres (beta), hacer y entregar las prácticas que deja tu docente.</p>
+    <p>Si tu docente te deja una práctica, hacerla y entregarla no cuesta nada.</p>
+  </section>
+
+  <footer>
+    <p>Las funciones marcadas como "Próximamente" todavía no existen. Ningún plan está a la venta: Rangokit no pide tarjeta ni datos de facturación.</p>
+    <p>Rangokit es código abierto bajo licencia AGPL-3.0. <a href="https://github.com/JasonPhoenix0311/rangokit">Consulta el código fuente</a>.</p>
+  </footer>
+</div>
+</body>
+</html>

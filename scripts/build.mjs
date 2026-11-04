@@ -8,6 +8,7 @@ const read = async (path) => (await readFile(new URL(path, root), 'utf8')).repla
 // Módulos en orden de dependencia. Cada uno queda en su propio ámbito, como un módulo ES real,
 // para que dos archivos puedan usar los mismos nombres internos.
 const MODULES = [
+  'src/plans.js',
   'src/engine.js',
   'src/practices/p01.js',
   'src/ui.js',
@@ -63,3 +64,11 @@ const html = (await read('src/index.template.html'))
 await mkdir(new URL('dist/', root), { recursive: true });
 await writeFile(new URL('dist/index.html', root), html);
 console.log(`dist/index.html: ${(html.length / 1024).toFixed(1)} KB`);
+
+// Página pública de planes, estática y sin scripts. Se sirve en /planes/.
+const { renderPlansPage } = await import(new URL('src/plans-page.js', root));
+const plansStyles = (await Promise.all(['src/styles.css', 'src/plans.css'].map(read))).join('\n');
+const plansHtml = renderPlansPage({ styles: '\n' + plansStyles, source });
+await mkdir(new URL('dist/planes/', root), { recursive: true });
+await writeFile(new URL('dist/planes/index.html', root), plansHtml);
+console.log(`dist/planes/index.html: ${(plansHtml.length / 1024).toFixed(1)} KB`);

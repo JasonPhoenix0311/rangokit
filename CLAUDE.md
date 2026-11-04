@@ -15,7 +15,8 @@ Ejecuta ambos antes de dar un cambio por terminado.
 - `src/practices/`: circuito, simulación y diagnóstico de cada práctica.
 - `src/ui.js`, `src/styles.css`, `src/index.template.html`: interfaz de la práctica guiada.
 - `src/editor/`: editor de proyectos libres. `catalog.js` (componentes y filtros), `project.js` (modelo y revisión del cableado), `arduino.js` (tabla de pines, revisión y generación del sketch), `calc.js` (ley de Ohm y valores comerciales), `rango.js` (Rango: análisis del proyecto, reconocimiento de problemas y ejemplos verificados), `learn.js` (clasificador Naive Bayes local), `web.js` (búsqueda opcional en GitHub), `sim.js` (simulación en tiempo real de los proyectos libres), `dialog.js` (conversación guiada con Rango) y `ui.js` (interfaz). Estilos en `src/editor.css`.
-- `scripts/build.mjs`: une todo en un solo HTML. Cada módulo queda en su propio ámbito; un archivo nuevo se agrega a `MODULES` después de sus dependencias.
+- `src/plans.js`: configuración central de planes, consulta del plan de una cuenta (`planOf`, `includes`, `canUse`) y migración del campo `plan`. `src/plans-page.js` y `src/plans.css` generan la página estática `/planes`. No hay cobros: toda función nueva de pago se declara con `available: false`.
+- `scripts/build.mjs`: une todo en un solo HTML y genera `dist/planes/index.html`. Cada módulo queda en su propio ámbito; un archivo nuevo se agrega a `MODULES` después de sus dependencias.
 - `test/`: pruebas del motor y del editor.
 
 ## Reglas del proyecto

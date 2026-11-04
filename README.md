@@ -23,6 +23,10 @@ Rangokit no solo muestra por dónde pasan la corriente y el aire. Prueba el circ
 - **Aprendizaje automático:** Rango reconoce el problema con un clasificador Naive Bayes que corre en tu navegador. Cuando confirmas su respuesta o eliges otro problema, aprende de tu enunciado y reconoce mejor los siguientes. Lo aprendido se guarda solo en tu navegador y se puede borrar. El modelo solo reconoce el tipo de problema: los errores de cableado los siguen decidiendo reglas fijas.
 - **Proyectos en la red:** Rango busca en GitHub proyectos parecidos al problema reconocido, los ordena por parecido y popularidad, y aprende cuáles te sirvieron.
 
+## Planes
+
+La página **Planes** (`/planes`) muestra los planes previstos para estudiantes, docentes y escuelas. Los precios están sujetos a validación y **aún no se realizan cobros**: Rangokit no pide cuenta, tarjeta ni datos de facturación. El simulador, las prácticas y las pistas por reglas siguen gratis y sin cuenta, y hacer o entregar una práctica que deja un docente nunca cuesta.
+
 ## Uso
 
 Úsalo en línea en **https://jasonphoenix0311.github.io/rangokit/**, o abre `dist/index.html` en un navegador. No necesita instalación ni conexión.

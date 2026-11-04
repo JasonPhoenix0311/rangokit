@@ -1,0 +1,29 @@
+/* Página /planes. Reutiliza los colores y la tipografía de styles.css. */
+.plans-page { max-width: 1180px; }
+.notice {
+  border: 1px solid var(--volt); border-left-width: 4px; border-radius: 4px;
+  background: var(--sheet); padding: 10px 14px; font-size: 15px;
+}
+.plans { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.plan {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--sheet); border: 1px solid var(--line); border-radius: 4px; padding: 16px;
+}
+.plan.free { border-color: var(--ok); }
+.plan h2, .promise h2 { font-family: var(--display); font-weight: 600; font-size: 22px; line-height: 1.1; }
+.plan .price { font-family: var(--mono); font-size: 15px; font-weight: 700; }
+.plan.free .price { color: var(--ok); }
+.plan .summary { color: var(--muted); }
+.plan .features { display: grid; align-content: start; gap: 5px; flex: 1; padding-top: 6px; border-top: 1px solid var(--grid); font-size: 14px; }
+.plan .features li { padding-left: 18px; position: relative; }
+.plan .features li::before { position: absolute; left: 0; font-weight: 700; }
+.plan .features li.ready::before { content: "✓"; color: var(--ok); }
+.plan .features li.later { color: var(--muted); }
+.plan .features li.later::before { content: "·"; }
+.soon {
+  display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 3px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--volt); border: 1px solid var(--volt);
+}
+.plan .account { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.promise { display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 14px; }
