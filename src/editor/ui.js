@@ -556,7 +556,7 @@ function paramFields(component) {
   return `<h4 class="label">Parámetros</h4>${definition(component.type).energy.params.map((p) => {
     const value = param(component, p.key);
     const input = p.options
-      ? `<select data-param="${p.key}">${p.options.map((o) => `<option value="${o}"${o === value ? ' selected' : ''}>${o} ${esc(p.unit)}</option>`).join('')}</select>`
+      ? `<select data-param="${p.key}">${p.options.map((o) => `<option value="${o}"${o === value ? ' selected' : ''}>${esc(p.labels?.[o] ?? `${o} ${p.unit}`)}</option>`).join('')}</select>`
       : `<input type="number" data-param="${p.key}" min="${p.min}" max="${p.max}" step="${p.step}" value="${value}">`;
     return `<label class="field">${esc(p.label)}${p.options ? '' : ` (${esc(p.unit)})`}${input}</label>`;
   }).join('')}`;

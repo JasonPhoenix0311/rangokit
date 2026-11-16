@@ -9,6 +9,10 @@
 // con el origen en el centro del componente sin girar y sobre la mesa.
 import { definition, placePort, rotatedSize, ledColor, param } from './catalog.js';
 
+/** Altura dibujada de una torre o poste (unidades 3D) para una altura real en metros: escala reducida. */
+export const towerHeight = (m) => Math.min(5, 0.8 + m * 0.05);
+export const poleHeight = (m) => Math.min(3, 0.2 + m * 0.12);
+
 export const SCALE = 0.01;
 
 export const COLORS = {
@@ -112,11 +116,23 @@ export function model(component) {
     case 'motor-ca': case 'motor-cd': return [...machine(t === 'motor-ca' ? COLORS.blue : COLORS.navy), cyl(0.04, 0.25, 0.32, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' })];
     case 'generador': return [...machine(COLORS.green), cyl(0.04, 0.25, -0.42, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' })];
     case 'servo': return [box(0.42, 0.22, 0.22, 0, 0.11, 0, COLORS.blue), box(0.04, 0.03, 0.26, 0.1, 0.24, 0, COLORS.white, { role: 'servo' })];
-    case 'panel-solar': return [box(0.05, 0.35, 0.05, -0.3, 0.17, 0.2, COLORS.metal), box(0.05, 0.35, 0.05, 0.3, 0.17, 0.2, COLORS.metal),
-      box(w * 0.92, 0.03, d * 0.9, 0, 0.42, 0, COLORS.panel, { tilt: -0.5, role: 'panel', metal: 0.3 })];
-    case 'aerogenerador': return [cyl(0.05, 1.6, 0, 0.8, 0, 'y', COLORS.white), box(0.3, 0.14, 0.14, 0, 1.62, 0, COLORS.white), sph(0.07, 0.17, 1.62, 0, COLORS.metal), ...blades(0.2, 1.62, 0, 0.62)];
-    case 'rotor-eolico': return [box(0.2, 0.06, 0.3, 0.1, 0.03, 0, COLORS.dark), cyl(0.04, 0.27, 0.1, 0.17, 0, 'y', COLORS.metal),
-      cyl(0.04, 0.6, 0.15, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' }), sph(0.07, -0.18, 0.3, 0, COLORS.metal), ...blades(-0.2, 0.3, 0, 0.55)];
+    case 'panel-solar': {
+      const top = poleHeight(param(component, 'altura')) + 0.2;
+      return [box(0.05, top, 0.05, -0.3, top / 2, 0.2, COLORS.metal), box(0.05, top, 0.05, 0.3, top / 2, 0.2, COLORS.metal),
+        box(w * 0.92, 0.03, d * 0.9, 0, top + 0.07, 0, COLORS.panel, { tilt: -0.5, role: 'panel', metal: 0.3 })];
+    }
+    case 'aerogenerador': {
+      const hub = towerHeight(param(component, 'altura'));
+      return [cyl(0.05, hub, 0, hub / 2, 0, 'y', COLORS.white), box(0.3, 0.14, 0.14, 0, hub + 0.02, 0, COLORS.white), sph(0.07, 0.17, hub + 0.02, 0, COLORS.metal), ...blades(0.2, hub + 0.02, 0, 0.62)];
+    }
+    case 'rotor-eolico': {
+      // Como un molino de bombeo: aspas en lo alto de la torre y un eje vertical que baja a una caja en el suelo.
+      const hub = towerHeight(param(component, 'altura'));
+      return [box(0.3, 0.06, 0.3, -0.1, 0.03, 0, COLORS.dark), cyl(0.035, hub, -0.18, hub / 2, 0.06, 'y', COLORS.metal), cyl(0.035, hub, -0.02, hub / 2, -0.06, 'y', COLORS.metal),
+        cyl(0.025, hub - 0.3, -0.1, 0.3 + (hub - 0.3) / 2, 0, 'y', COLORS.chrome, { role: 'shaft', axisSpin: 'y' }),
+        box(0.16, 0.16, 0.16, -0.1, 0.3, 0, COLORS.alu), cyl(0.04, 0.42, 0.19, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' }),
+        box(0.16, 0.1, 0.1, -0.1, hub, 0, COLORS.metal), sph(0.06, -0.2, hub, 0, COLORS.metal), ...blades(-0.22, hub, 0, 0.55)];
+    }
     case 'turbina-hidraulica': return [box(0.6, 0.06, 0.5, 0, 0.03, 0, COLORS.dark), cyl(0.28, 0.14, 0, 0.32, 0, 'z', COLORS.copper, { metal: 0.6 }),
       ...[0, 1, 2, 3].map((i) => box(0.04, 0.4, 0.06, 0, 0.32, 0.09, COLORS.chrome, { role: 'blades', axisSpin: 'z', hub: [0, 0.32, 0.09], angle: (i * Math.PI) / 4, offset: 0 })),
       cyl(0.04, 0.3, 0.3, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' })];
@@ -203,10 +219,17 @@ export function spinRate(rpm) {
 /** Escena completa: componentes con sus piezas y conexiones con su recorrido. */
 export function scene(project) {
   return {
-    components: project.components.map((c) => ({ id: c.id, label: c.label, type: c.type, ...placement(c), parts: model(c) })),
+    components: project.components.map((c) => ({ id: c.id, label: tag(c), type: c.type, ...placement(c), parts: model(c) })),
     links: project.links.map((l) => ({ id: l.id, kind: l.kind, points: linkPoints(project, l), ...(LINKS[l.kind] ?? LINKS.elec) })),
     bounds: bounds(project),
   };
+}
+
+/** Etiqueta 3D: el nombre y, en torres y paneles, su altura. */
+export function tag(c) {
+  if (c.type === 'aerogenerador' || c.type === 'rotor-eolico') return `${c.label} · ${param(c, 'altura')} m`;
+  if (c.type === 'panel-solar') return `${c.label} · ${param(c, 'altitud')} msnm`;
+  return c.label;
 }
 
 function bounds(project) {

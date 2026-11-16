@@ -320,3 +320,56 @@ test('los parámetros respetan sus límites y opciones', () => {
   assert.equal(param(bat, 'capacidad'), 100);
   assert.equal(param(bat, 'inicio'), 50);
 });
+
+test('perfil del viento: más altura, más viento, según el terreno (ley de Hellmann)', async () => {
+  const { windAtHeight } = await import('../src/editor/energia.js');
+  assert.equal(windAtHeight(8, 10, 0.143), 8, 'a 10 m es el viento medido');
+  assert.ok(Math.abs(windAtHeight(8, 30, 0.143) - 8 * 3 ** 0.143) < 1e-9);
+  assert.ok(Math.abs(windAtHeight(8, 30, 0.143) - 9.36) < 0.01, 'a 30 m en campo abierto: ≈ 9.4 m/s');
+  assert.ok(windAtHeight(8, 30, 0.3) > windAtHeight(8, 30, 0.1), 'en la ciudad crece más con la altura que sobre el mar');
+  assert.ok(windAtHeight(8, 5, 0.143) < 8, 'abajo de 10 m hay menos viento');
+});
+
+test('radiación con la altitud del sitio (Meinel con corrección de Laue)', async () => {
+  const { altitudeFactor, laue } = await import('../src/editor/energia.js');
+  assert.equal(altitudeFactor(0), 1);
+  assert.ok(Math.abs(laue(0) - 0.846) < 0.002, 'nivel del mar, AM 1.5: ≈ 846 W/m² de radiación directa');
+  assert.ok(Math.abs(altitudeFactor(2240) - 1.188) < 0.005, 'Ciudad de México: ≈ 19 % más');
+  assert.ok(altitudeFactor(4000) > altitudeFactor(2240));
+});
+
+test('una torre más alta y un sitio más alto dan más energía en la simulación', () => {
+  const potencia = (type, config, env) => {
+    const p = createProject();
+    const src = add(p, type, config);
+    const cc = add(p, 'controlador-carga', { watts: 20000 });
+    const bat = add(p, 'bateria', { capacidad: 100000, inicio: 10 });
+    wire(p, src, 'out', cc, 'in');
+    wire(p, cc, 'bat', bat, 'bus');
+    const sim = createSim(p);
+    for (const [k, v] of Object.entries(env)) setEnv(sim, k, v);
+    advance(sim, 0.2);
+    return part(sim, src);
+  };
+  const baja = potencia('aerogenerador', { watts: 5000, altura: 10 }, { viento: 7 });
+  const alta = potencia('aerogenerador', { watts: 5000, altura: 40 }, { viento: 7 });
+  assert.ok(alta.wind > baja.wind && alta.watts > baja.watts * 1.4, 'a 40 m sopla más y la potencia sube con el cubo');
+  const mar = potencia('panel-solar', { watts: 1000, altitud: 0 }, { sol: 800 });
+  const cdmx = potencia('panel-solar', { watts: 1000, altitud: 2240 }, { sol: 800 });
+  assert.ok(Math.abs(cdmx.watts / mar.watts - 1.188) < 0.01);
+  assert.ok(Math.abs(cdmx.irr - 800 * 1.188) < 5);
+  // La altura de montaje del panel no cambia la energía, solo el dibujo.
+  assert.equal(potencia('panel-solar', { watts: 1000, altura: 12 }, { sol: 800 }).watts, mar.watts);
+});
+
+test('revisión: el rotor eólico alto gira más rápido y puede no necesitar tanta multiplicación', () => {
+  const p = createProject();
+  const wr = add(p, 'rotor-eolico', { altura: 10 });
+  const gen = add(p, 'generador');
+  wire(p, wr, 'eje', gen, 'eje');
+  const baja = reviewEnergy(p).find((f) => f.code === 'eje-lento');
+  wr.config.altura = 80;
+  const alta = reviewEnergy(p).find((f) => f.code === 'eje-lento');
+  const rpm = (f) => Number(f.text.match(/giraría a (\d+) rpm/)[1]);
+  assert.ok(rpm(alta) > rpm(baja));
+});

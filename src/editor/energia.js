@@ -24,6 +24,24 @@ export const ENERGY = {
   MOTOR_RPM: 1750, MIN_RPM: 900, TANK_OUT: 30, COMP_MIN: 0.8, IDLE: 0.05,
 };
 
+// Viento: el control da la velocidad a 10 m de altura (como un anemómetro estándar) y cada turbina la
+// corrige a la altura de su buje con la ley de potencia de Hellmann: v(h) = v₁₀ · (h / 10)^α.
+export const WIND_REF = 10;
+export const windAtHeight = (v10, height, alpha) => v10 * (Math.max(1, height) / WIND_REF) ** alpha;
+
+// Sol: el control da la irradiancia a nivel del mar. La radiación directa crece con la altitud del sitio
+// según el modelo de Meinel con la corrección de Laue: I = 1.353 · [(1 − 0.14·h)·0.7^(AM^0.678) + 0.14·h] kW/m²,
+// con h en km y masa de aire AM = 1.5. Se aplica la proporción entre la altitud del sitio y el nivel del mar.
+export function laue(km, am = 1.5) {
+  const k = 0.7 ** (am ** 0.678);
+  return 1.353 * ((1 - 0.14 * km) * k + 0.14 * km);
+}
+export const altitudeFactor = (msnm) => laue(Math.max(0, msnm) / 1000) / laue(0);
+
+/** Viento a la altura de una turbina y radiación en el sitio de un panel. */
+export const windOf = (c, env) => windAtHeight(env.viento, param(c, 'altura'), param(c, 'terreno'));
+export const sunOf = (c, env) => env.sol * altitudeFactor(param(c, 'altitud'));
+
 export const ESCALAS = [
   { value: 1, label: 'Tiempo real' },
   { value: 60, label: '1 s = 1 min' },
@@ -31,8 +49,8 @@ export const ESCALAS = [
 ];
 
 export const ENV_CONTROLS = [
-  { key: 'sol', label: 'Sol (irradiancia)', unit: 'W/m²', min: 0, max: 1200, step: 10 },
-  { key: 'viento', label: 'Viento', unit: 'm/s', min: 0, max: 30, step: 0.5 },
+  { key: 'sol', label: 'Sol (irradiancia a nivel del mar)', unit: 'W/m²', min: 0, max: 1200, step: 10 },
+  { key: 'viento', label: 'Viento (medido a 10 m de altura)', unit: 'm/s', min: 0, max: 30, step: 0.5 },
   { key: 'rio', label: 'Caudal del río', unit: 'L/s', min: 0, max: 200, step: 1 },
 ];
 
@@ -45,6 +63,9 @@ export const ENERGY_SIMPLIFICATIONS = [
   'El agua no pierde presión en las tuberías y los tanques no se igualan entre sí.',
   'El tiempo de la energía se puede acelerar; relés, válvulas y cilindros siguen en tiempo real.',
   'El CO₂ evitado usa un factor aproximado de 0.44 kg por kWh de la red mexicana.',
+  'El viento del control se mide a 10 m; cada turbina lo corrige a la altura de su buje con la ley de Hellmann (α según el terreno). No modela ráfagas, turbulencia ni obstáculos cercanos.',
+  'El sol del control es a nivel del mar; cada panel lo corrige por la altitud del sitio con el modelo de Meinel y Laue para la radiación directa. No modela nubes, temperatura del panel ni orientación.',
+  'En 3D, las torres y postes se dibujan a escala reducida: más altos se ven más altos, pero no en metros reales.',
 ];
 
 const SOURCES = { 'panel-solar': 'solar', aerogenerador: 'eolica', generador: 'generador' };
@@ -362,8 +383,10 @@ function shafts(sim) {
     for (const m of list) {
       const { c, part } = m;
       if (c.type === 'rotor-eolico') {
-        const r = rotor(param(c, 'radio'), env.viento);
-        if (env.viento > 25) warnOnce(sim, `freno-${c.id}`, `${c.label} se frena: el viento pasa de 25 m/s.`);
+        const v = windOf(c, env);
+        part.wind = v;
+        const r = rotor(param(c, 'radio'), v);
+        if (v > 25) warnOnce(sim, `freno-${c.id}`, `${c.label} se frena: el viento a ${param(c, 'altura')} m pasa de 25 m/s.`);
         drivers.push({ ...m, avail: r.watts, rpm: r.rpm, origin: 'eolica' });
       } else if (c.type === 'turbina-hidraulica') {
         const q = part.qGot ?? 0;
@@ -446,8 +469,14 @@ function buses(sim, dtE) {
     const part = sim.parts.get(c.id);
     if (SOURCES[c.type]) {
       let avail = 0;
-      if (c.type === 'panel-solar') avail = (param(c, 'watts') * env.sol) / 1000;
-      if (c.type === 'aerogenerador') avail = windPower(param(c, 'watts'), env.viento);
+      if (c.type === 'panel-solar') {
+        part.irr = sunOf(c, env);
+        avail = (param(c, 'watts') * part.irr) / 1000;
+      }
+      if (c.type === 'aerogenerador') {
+        part.wind = windOf(c, env);
+        avail = windPower(param(c, 'watts'), part.wind);
+      }
       if (c.type === 'generador') avail = part.gen ?? 0;
       bus(c, 'out').sources.push({ c, part, avail, kind: c.type === 'generador' ? (part.origin === 'motor' ? 'generador' : part.origin ?? 'generador') : SOURCES[c.type] });
     } else if (c.type === 'controlador-carga' || c.type === 'inversor') {
@@ -605,14 +634,17 @@ export function energyText(sim, c) {
   const part = sim.parts.get(c.id);
   if (!sim.energy?.has || !part) return '';
   switch (c.type) {
-    case 'panel-solar': case 'aerogenerador': case 'controlador-carga': return fmtW(part.watts);
+    case 'panel-solar': return `${fmtW(part.watts)} · ${Math.round(part.irr ?? 0)} W/m²`;
+    case 'aerogenerador': return `${fmtW(part.watts)} · viento ${round(part.wind ?? 0, 1)} m/s a ${param(c, 'altura')} m`;
+    case 'controlador-carga': return fmtW(part.watts);
     case 'generador': return `${Math.round(part.rpm ?? 0)} rpm · ${fmtW(part.watts)}`;
     case 'inversor': return part.trip ? 'sobrecarga' : fmtW(part.watts);
     case 'bateria': return `${Math.round(part.soc)} % · ${part.watts > 1 ? 'carga' : part.watts < -1 ? 'entrega' : 'reposo'} ${fmtW(Math.abs(part.watts))}`;
     case 'red-electrica': return part.watts > 1 ? `importa ${fmtW(part.watts)}` : part.watts < -1 ? `exporta ${fmtW(-part.watts)}` : 'sin flujo';
     case 'foco-ca': case 'carga-casa': case 'lampara-cd': return part.on ? fmtW(part.watts) : 'sin energía';
     case 'motor-ca': case 'motor-cd': return part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido';
-    case 'rotor-eolico': case 'turbina-hidraulica': return part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido';
+    case 'rotor-eolico': return `${part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido'} · viento ${round(part.wind ?? 0, 1)} m/s a ${param(c, 'altura')} m`;
+    case 'turbina-hidraulica': return part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido';
     case 'multiplicadora': return '';
     case 'bomba': return part.q > 0 ? `${round(part.q, 2)} L/s` : (part.rpm ?? 0) > 0 ? 'sin bombear' : 'detenida';
     case 'compresor': return part.on ? '6 bar' : 'sin presión';
@@ -739,12 +771,12 @@ export function reviewEnergy(project) {
     }
     const d = drivers[0];
     if (!d) return;
-    const rpm = d.c.type === 'rotor-eolico' ? rotor(param(d.c, 'radio'), 10).rpm : d.c.type === 'turbina-hidraulica' ? 1500 : ENERGY.MOTOR_RPM;
+    const rpm = d.c.type === 'rotor-eolico' ? rotor(param(d.c, 'radio'), windAtHeight(10, param(d.c, 'altura'), param(d.c, 'terreno'))).rpm : d.c.type === 'turbina-hidraulica' ? 1500 : ENERGY.MOTOR_RPM;
     const base = rpm / cluster.factor.get(d.net);
     for (const m of loads) {
       const r = base * cluster.factor.get(m.net);
       const need = m.c.type === 'generador' ? param(m.c, 'rpm') : ENERGY.MIN_RPM;
-      const cond = d.c.type === 'rotor-eolico' ? ' con viento de 10 m/s' : '';
+      const cond = d.c.type === 'rotor-eolico' ? ' con viento de 10 m/s (medido a 10 m)' : '';
       if (r < (m.c.type === 'generador' ? 0.5 * need : need)) {
         findings.push({ level: 'aviso', code: 'eje-lento', where: [m.c.id, d.c.id],
           text: `${m.c.label} giraría a ${Math.round(r)} rpm${cond} y necesita ${need}: ${m.c.type === 'generador' ? 'entregaría muy poca energía' : 'no funcionaría'}.`,

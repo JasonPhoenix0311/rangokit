@@ -86,3 +86,21 @@ test('la pose 3D muestra el nivel del tanque y la carga de la batería', () => {
   advance(sim, 0.3);
   assert.equal(pose(m, view(sim).parts.get(m.id)).rpm, 1750);
 });
+
+test('en 3D la torre y el poste crecen con la altura y la etiqueta la muestra', async () => {
+  const { towerHeight, tag } = await import('../src/editor/escena3d.js');
+  const p = createProject();
+  const wg = addComponent(p, 'aerogenerador');
+  const top = (c) => Math.max(...model(c).map((part) => part.pos[1]));
+  const baja = top(wg);
+  wg.config.altura = 40;
+  assert.ok(top(wg) > baja);
+  assert.ok(towerHeight(40) > towerHeight(10) && towerHeight(1000) === 5, 'escala reducida con tope');
+  assert.equal(tag(wg), `${wg.label} · 40 m`);
+  const pv = addComponent(p, 'panel-solar');
+  const panel = top(pv);
+  pv.config.altura = 6;
+  assert.ok(top(pv) > panel);
+  pv.config.altitud = 2240;
+  assert.equal(tag(pv), `${pv.label} · 2240 msnm`);
+});

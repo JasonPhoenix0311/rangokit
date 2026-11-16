@@ -2149,6 +2149,10 @@ const agua = (id, label, side, at, extra) => P(id, label, side, at, 'agua', 'agu
 const param = (key, label, unit, def, min, max, step = 1) => ({ key, label, unit, default: def, min, max, step });
 const WATTS = (def, max = 20000, label = 'Potencia nominal') => param('watts', label, 'W', def, 1, max, 1);
 const VOLTS = (def) => ({ ...param('volts', 'Tensión', 'V', def, 12, 48, 12), options: [12, 24, 48] });
+// Exponente de Hellmann (perfil del viento con la altura) según el terreno.
+const TERRENOS = { 0.1: 'Mar o lago (α = 0.10)', 0.143: 'Campo abierto (α = 1/7)', 0.2: 'Rural con árboles (α = 0.20)', 0.3: 'Ciudad (α = 0.30)' };
+const TERRENO = { ...param('terreno', 'Terreno alrededor', '', 0.143, 0.1, 0.3, 0.001), options: [0.1, 0.143, 0.2, 0.3], labels: TERRENOS };
+const ALTURA_TORRE = (def) => param('altura', 'Altura de la torre (buje)', 'm', def, 2, 150, 1);
 
 const T = (x, y, text, cls = 'glyph-text') => `<text class="${cls}" x="${x}" y="${y}" text-anchor="middle">${text}</text>`;
 const machine = (letter) => `<circle cx="40" cy="30" r="20"/>${T(40, 35, letter)}`;
@@ -2178,22 +2182,22 @@ const ENERGY_CATALOG = [
     type: 'panel-solar', name: 'Panel solar fotovoltaico', prefix: 'PV', category: 'generacion', systems: S, w: 110, h: 70,
     ports: [pot('out', 'salida', 'r', 35, 'gen')],
     glyph: '<rect x="6" y="10" width="80" height="52"/><path d="M6 27 H86 M6 45 H86 M33 10 V62 M60 10 V62"/><circle cx="99" cy="12" r="6"/>',
-    note: 'Entrega potencia según la irradiancia (W/m²). Su tensión varía con el sol: a la batería se conecta con un controlador de carga.',
-    energy: { params: [WATTS(400, 10000, 'Potencia pico')] },
+    note: 'Entrega potencia según la irradiancia (W/m²). En sitios más altos sobre el nivel del mar llega más radiación (menos atmósfera); la altura de montaje solo cambia el dibujo 3D, porque unos metros más no cambian la radiación (solo evitan sombras). Su tensión varía con el sol: a la batería se conecta con un controlador de carga.',
+    energy: { params: [WATTS(400, 10000, 'Potencia pico'), param('altitud', 'Altitud del sitio', 'msnm', 0, 0, 5000, 10), param('altura', 'Altura de montaje', 'm', 1, 0, 30, 0.5)] },
   },
   {
     type: 'aerogenerador', name: 'Aerogenerador pequeño', prefix: 'WG', category: 'generacion', systems: S, w: 80, h: 90,
     ports: [pot('out', 'salida', 'r', 70, 'gen')],
     glyph: '<line x1="40" y1="40" x2="40" y2="86"/><path d="M40 40 L40 6 M40 40 L69 57 M40 40 L11 57" stroke-width="4"/><circle class="filled" cx="40" cy="40" r="4"/><rect x="33" y="84" width="14" height="5"/>',
-    note: 'Arranca con 3 m/s, da su potencia nominal desde 12 m/s y se frena arriba de 25 m/s. Se conecta a la batería con un controlador de carga.',
-    energy: { params: [WATTS(1000, 20000)] },
+    note: 'Arranca con 3 m/s, da su potencia nominal desde 12 m/s y se frena arriba de 25 m/s, medidos a la altura de su buje: entre más alta la torre, más viento (perfil de Hellmann según el terreno). Se conecta a la batería con un controlador de carga.',
+    energy: { params: [WATTS(1000, 20000), ALTURA_TORRE(10), TERRENO] },
   },
   {
     type: 'rotor-eolico', name: 'Rotor eólico (solo aspas y eje)', prefix: 'WR', category: 'generacion', systems: S, w: 80, h: 80,
     ports: [eje('eje', 'eje', 'r', 40, { required: true })],
     glyph: '<path d="M30 40 L30 6 M30 40 L59 57 M30 40 L1 57" stroke-width="4"/><circle class="filled" cx="30" cy="40" r="5"/><line class="shaft" x1="35" y1="40" x2="80" y2="40"/>',
     note: 'Convierte el viento en giro: P = ½·ρ·A·v³·Cp. Gira lento (cientos de rpm): para un generador o una bomba suele necesitar multiplicadora.',
-    energy: { params: [param('radio', 'Radio de las aspas', 'm', 1.5, 0.3, 20, 0.1)] },
+    energy: { params: [param('radio', 'Radio de las aspas', 'm', 1.5, 0.3, 20, 0.1), ALTURA_TORRE(10), TERRENO] },
   },
   {
     type: 'turbina-hidraulica', name: 'Turbina hidráulica (Pelton)', prefix: 'HT', category: 'generacion', systems: S, w: 90, h: 80,
@@ -2372,7 +2376,7 @@ const ENERGY_CATALOG = [
   },
 ];
 
-return { tankGlyph, ENERGY_SYSTEM, ENERGY_CATEGORIES, ENERGY_CATALOG };
+return { TERRENOS, tankGlyph, ENERGY_SYSTEM, ENERGY_CATEGORIES, ENERGY_CATALOG };
 })();
 modules['src/editor/catalog.js'] = (() => {
 // Catálogo de componentes del editor. Solo datos y símbolos: no sabe nada de proyectos ni de la interfaz.
@@ -4843,6 +4847,24 @@ const ENERGY = {
   MOTOR_RPM: 1750, MIN_RPM: 900, TANK_OUT: 30, COMP_MIN: 0.8, IDLE: 0.05,
 };
 
+// Viento: el control da la velocidad a 10 m de altura (como un anemómetro estándar) y cada turbina la
+// corrige a la altura de su buje con la ley de potencia de Hellmann: v(h) = v₁₀ · (h / 10)^α.
+const WIND_REF = 10;
+const windAtHeight = (v10, height, alpha) => v10 * (Math.max(1, height) / WIND_REF) ** alpha;
+
+// Sol: el control da la irradiancia a nivel del mar. La radiación directa crece con la altitud del sitio
+// según el modelo de Meinel con la corrección de Laue: I = 1.353 · [(1 − 0.14·h)·0.7^(AM^0.678) + 0.14·h] kW/m²,
+// con h en km y masa de aire AM = 1.5. Se aplica la proporción entre la altitud del sitio y el nivel del mar.
+function laue(km, am = 1.5) {
+  const k = 0.7 ** (am ** 0.678);
+  return 1.353 * ((1 - 0.14 * km) * k + 0.14 * km);
+}
+const altitudeFactor = (msnm) => laue(Math.max(0, msnm) / 1000) / laue(0);
+
+/** Viento a la altura de una turbina y radiación en el sitio de un panel. */
+const windOf = (c, env) => windAtHeight(env.viento, param(c, 'altura'), param(c, 'terreno'));
+const sunOf = (c, env) => env.sol * altitudeFactor(param(c, 'altitud'));
+
 const ESCALAS = [
   { value: 1, label: 'Tiempo real' },
   { value: 60, label: '1 s = 1 min' },
@@ -4850,8 +4872,8 @@ const ESCALAS = [
 ];
 
 const ENV_CONTROLS = [
-  { key: 'sol', label: 'Sol (irradiancia)', unit: 'W/m²', min: 0, max: 1200, step: 10 },
-  { key: 'viento', label: 'Viento', unit: 'm/s', min: 0, max: 30, step: 0.5 },
+  { key: 'sol', label: 'Sol (irradiancia a nivel del mar)', unit: 'W/m²', min: 0, max: 1200, step: 10 },
+  { key: 'viento', label: 'Viento (medido a 10 m de altura)', unit: 'm/s', min: 0, max: 30, step: 0.5 },
   { key: 'rio', label: 'Caudal del río', unit: 'L/s', min: 0, max: 200, step: 1 },
 ];
 
@@ -4864,6 +4886,9 @@ const ENERGY_SIMPLIFICATIONS = [
   'El agua no pierde presión en las tuberías y los tanques no se igualan entre sí.',
   'El tiempo de la energía se puede acelerar; relés, válvulas y cilindros siguen en tiempo real.',
   'El CO₂ evitado usa un factor aproximado de 0.44 kg por kWh de la red mexicana.',
+  'El viento del control se mide a 10 m; cada turbina lo corrige a la altura de su buje con la ley de Hellmann (α según el terreno). No modela ráfagas, turbulencia ni obstáculos cercanos.',
+  'El sol del control es a nivel del mar; cada panel lo corrige por la altitud del sitio con el modelo de Meinel y Laue para la radiación directa. No modela nubes, temperatura del panel ni orientación.',
+  'En 3D, las torres y postes se dibujan a escala reducida: más altos se ven más altos, pero no en metros reales.',
 ];
 
 const SOURCES = { 'panel-solar': 'solar', aerogenerador: 'eolica', generador: 'generador' };
@@ -5181,8 +5206,10 @@ function shafts(sim) {
     for (const m of list) {
       const { c, part } = m;
       if (c.type === 'rotor-eolico') {
-        const r = rotor(param(c, 'radio'), env.viento);
-        if (env.viento > 25) warnOnce(sim, `freno-${c.id}`, `${c.label} se frena: el viento pasa de 25 m/s.`);
+        const v = windOf(c, env);
+        part.wind = v;
+        const r = rotor(param(c, 'radio'), v);
+        if (v > 25) warnOnce(sim, `freno-${c.id}`, `${c.label} se frena: el viento a ${param(c, 'altura')} m pasa de 25 m/s.`);
         drivers.push({ ...m, avail: r.watts, rpm: r.rpm, origin: 'eolica' });
       } else if (c.type === 'turbina-hidraulica') {
         const q = part.qGot ?? 0;
@@ -5265,8 +5292,14 @@ function buses(sim, dtE) {
     const part = sim.parts.get(c.id);
     if (SOURCES[c.type]) {
       let avail = 0;
-      if (c.type === 'panel-solar') avail = (param(c, 'watts') * env.sol) / 1000;
-      if (c.type === 'aerogenerador') avail = windPower(param(c, 'watts'), env.viento);
+      if (c.type === 'panel-solar') {
+        part.irr = sunOf(c, env);
+        avail = (param(c, 'watts') * part.irr) / 1000;
+      }
+      if (c.type === 'aerogenerador') {
+        part.wind = windOf(c, env);
+        avail = windPower(param(c, 'watts'), part.wind);
+      }
       if (c.type === 'generador') avail = part.gen ?? 0;
       bus(c, 'out').sources.push({ c, part, avail, kind: c.type === 'generador' ? (part.origin === 'motor' ? 'generador' : part.origin ?? 'generador') : SOURCES[c.type] });
     } else if (c.type === 'controlador-carga' || c.type === 'inversor') {
@@ -5424,14 +5457,17 @@ function energyText(sim, c) {
   const part = sim.parts.get(c.id);
   if (!sim.energy?.has || !part) return '';
   switch (c.type) {
-    case 'panel-solar': case 'aerogenerador': case 'controlador-carga': return fmtW(part.watts);
+    case 'panel-solar': return `${fmtW(part.watts)} · ${Math.round(part.irr ?? 0)} W/m²`;
+    case 'aerogenerador': return `${fmtW(part.watts)} · viento ${round(part.wind ?? 0, 1)} m/s a ${param(c, 'altura')} m`;
+    case 'controlador-carga': return fmtW(part.watts);
     case 'generador': return `${Math.round(part.rpm ?? 0)} rpm · ${fmtW(part.watts)}`;
     case 'inversor': return part.trip ? 'sobrecarga' : fmtW(part.watts);
     case 'bateria': return `${Math.round(part.soc)} % · ${part.watts > 1 ? 'carga' : part.watts < -1 ? 'entrega' : 'reposo'} ${fmtW(Math.abs(part.watts))}`;
     case 'red-electrica': return part.watts > 1 ? `importa ${fmtW(part.watts)}` : part.watts < -1 ? `exporta ${fmtW(-part.watts)}` : 'sin flujo';
     case 'foco-ca': case 'carga-casa': case 'lampara-cd': return part.on ? fmtW(part.watts) : 'sin energía';
     case 'motor-ca': case 'motor-cd': return part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido';
-    case 'rotor-eolico': case 'turbina-hidraulica': return part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido';
+    case 'rotor-eolico': return `${part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido'} · viento ${round(part.wind ?? 0, 1)} m/s a ${param(c, 'altura')} m`;
+    case 'turbina-hidraulica': return part.rpm > 0 ? `${Math.round(part.rpm)} rpm · ${fmtW(part.watts)}` : 'detenido';
     case 'multiplicadora': return '';
     case 'bomba': return part.q > 0 ? `${round(part.q, 2)} L/s` : (part.rpm ?? 0) > 0 ? 'sin bombear' : 'detenida';
     case 'compresor': return part.on ? '6 bar' : 'sin presión';
@@ -5558,12 +5594,12 @@ function reviewEnergy(project) {
     }
     const d = drivers[0];
     if (!d) return;
-    const rpm = d.c.type === 'rotor-eolico' ? rotor(param(d.c, 'radio'), 10).rpm : d.c.type === 'turbina-hidraulica' ? 1500 : ENERGY.MOTOR_RPM;
+    const rpm = d.c.type === 'rotor-eolico' ? rotor(param(d.c, 'radio'), windAtHeight(10, param(d.c, 'altura'), param(d.c, 'terreno'))).rpm : d.c.type === 'turbina-hidraulica' ? 1500 : ENERGY.MOTOR_RPM;
     const base = rpm / cluster.factor.get(d.net);
     for (const m of loads) {
       const r = base * cluster.factor.get(m.net);
       const need = m.c.type === 'generador' ? param(m.c, 'rpm') : ENERGY.MIN_RPM;
-      const cond = d.c.type === 'rotor-eolico' ? ' con viento de 10 m/s' : '';
+      const cond = d.c.type === 'rotor-eolico' ? ' con viento de 10 m/s (medido a 10 m)' : '';
       if (r < (m.c.type === 'generador' ? 0.5 * need : need)) {
         findings.push({ level: 'aviso', code: 'eje-lento', where: [m.c.id, d.c.id],
           text: `${m.c.label} giraría a ${Math.round(r)} rpm${cond} y necesita ${need}: ${m.c.type === 'generador' ? 'entregaría muy poca energía' : 'no funcionaría'}.`,
@@ -5617,7 +5653,7 @@ function reviewEnergy(project) {
 }
 
 
-return { ENERGY, ESCALAS, ENV_CONTROLS, ENERGY_SIMPLIFICATIONS, ENERGY_TOGGLES, isEnergy, groups, solarAt, windPower, rotor, turbinePower, pumpFlow, shaftClusters, createEnergy, setEnv, stepEnergy, fmtW, fmtWh, energyText, energyActive, energyLink, reviewEnergy };
+return { ENERGY, WIND_REF, windAtHeight, laue, altitudeFactor, windOf, sunOf, ESCALAS, ENV_CONTROLS, ENERGY_SIMPLIFICATIONS, ENERGY_TOGGLES, isEnergy, groups, solarAt, windPower, rotor, turbinePower, pumpFlow, shaftClusters, createEnergy, setEnv, stepEnergy, fmtW, fmtWh, energyText, energyActive, energyLink, reviewEnergy };
 })();
 modules['src/editor/sim.js'] = (() => {
 // Simulación en tiempo real de los proyectos libres del editor.
@@ -6831,6 +6867,10 @@ modules['src/editor/escena3d.js'] = (() => {
 // con el origen en el centro del componente sin girar y sobre la mesa.
 const { definition, placePort, rotatedSize, ledColor, param } = modules['src/editor/catalog.js'];
 
+/** Altura dibujada de una torre o poste (unidades 3D) para una altura real en metros: escala reducida. */
+const towerHeight = (m) => Math.min(5, 0.8 + m * 0.05);
+const poleHeight = (m) => Math.min(3, 0.2 + m * 0.12);
+
 const SCALE = 0.01;
 
 const COLORS = {
@@ -6934,11 +6974,23 @@ function model(component) {
     case 'motor-ca': case 'motor-cd': return [...machine(t === 'motor-ca' ? COLORS.blue : COLORS.navy), cyl(0.04, 0.25, 0.32, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' })];
     case 'generador': return [...machine(COLORS.green), cyl(0.04, 0.25, -0.42, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' })];
     case 'servo': return [box(0.42, 0.22, 0.22, 0, 0.11, 0, COLORS.blue), box(0.04, 0.03, 0.26, 0.1, 0.24, 0, COLORS.white, { role: 'servo' })];
-    case 'panel-solar': return [box(0.05, 0.35, 0.05, -0.3, 0.17, 0.2, COLORS.metal), box(0.05, 0.35, 0.05, 0.3, 0.17, 0.2, COLORS.metal),
-      box(w * 0.92, 0.03, d * 0.9, 0, 0.42, 0, COLORS.panel, { tilt: -0.5, role: 'panel', metal: 0.3 })];
-    case 'aerogenerador': return [cyl(0.05, 1.6, 0, 0.8, 0, 'y', COLORS.white), box(0.3, 0.14, 0.14, 0, 1.62, 0, COLORS.white), sph(0.07, 0.17, 1.62, 0, COLORS.metal), ...blades(0.2, 1.62, 0, 0.62)];
-    case 'rotor-eolico': return [box(0.2, 0.06, 0.3, 0.1, 0.03, 0, COLORS.dark), cyl(0.04, 0.27, 0.1, 0.17, 0, 'y', COLORS.metal),
-      cyl(0.04, 0.6, 0.15, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' }), sph(0.07, -0.18, 0.3, 0, COLORS.metal), ...blades(-0.2, 0.3, 0, 0.55)];
+    case 'panel-solar': {
+      const top = poleHeight(param(component, 'altura')) + 0.2;
+      return [box(0.05, top, 0.05, -0.3, top / 2, 0.2, COLORS.metal), box(0.05, top, 0.05, 0.3, top / 2, 0.2, COLORS.metal),
+        box(w * 0.92, 0.03, d * 0.9, 0, top + 0.07, 0, COLORS.panel, { tilt: -0.5, role: 'panel', metal: 0.3 })];
+    }
+    case 'aerogenerador': {
+      const hub = towerHeight(param(component, 'altura'));
+      return [cyl(0.05, hub, 0, hub / 2, 0, 'y', COLORS.white), box(0.3, 0.14, 0.14, 0, hub + 0.02, 0, COLORS.white), sph(0.07, 0.17, hub + 0.02, 0, COLORS.metal), ...blades(0.2, hub + 0.02, 0, 0.62)];
+    }
+    case 'rotor-eolico': {
+      // Como un molino de bombeo: aspas en lo alto de la torre y un eje vertical que baja a una caja en el suelo.
+      const hub = towerHeight(param(component, 'altura'));
+      return [box(0.3, 0.06, 0.3, -0.1, 0.03, 0, COLORS.dark), cyl(0.035, hub, -0.18, hub / 2, 0.06, 'y', COLORS.metal), cyl(0.035, hub, -0.02, hub / 2, -0.06, 'y', COLORS.metal),
+        cyl(0.025, hub - 0.3, -0.1, 0.3 + (hub - 0.3) / 2, 0, 'y', COLORS.chrome, { role: 'shaft', axisSpin: 'y' }),
+        box(0.16, 0.16, 0.16, -0.1, 0.3, 0, COLORS.alu), cyl(0.04, 0.42, 0.19, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' }),
+        box(0.16, 0.1, 0.1, -0.1, hub, 0, COLORS.metal), sph(0.06, -0.2, hub, 0, COLORS.metal), ...blades(-0.22, hub, 0, 0.55)];
+    }
     case 'turbina-hidraulica': return [box(0.6, 0.06, 0.5, 0, 0.03, 0, COLORS.dark), cyl(0.28, 0.14, 0, 0.32, 0, 'z', COLORS.copper, { metal: 0.6 }),
       ...[0, 1, 2, 3].map((i) => box(0.04, 0.4, 0.06, 0, 0.32, 0.09, COLORS.chrome, { role: 'blades', axisSpin: 'z', hub: [0, 0.32, 0.09], angle: (i * Math.PI) / 4, offset: 0 })),
       cyl(0.04, 0.3, 0.3, 0.3, 0, 'x', COLORS.chrome, { role: 'shaft', axisSpin: 'x' })];
@@ -7025,10 +7077,17 @@ function spinRate(rpm) {
 /** Escena completa: componentes con sus piezas y conexiones con su recorrido. */
 function scene(project) {
   return {
-    components: project.components.map((c) => ({ id: c.id, label: c.label, type: c.type, ...placement(c), parts: model(c) })),
+    components: project.components.map((c) => ({ id: c.id, label: tag(c), type: c.type, ...placement(c), parts: model(c) })),
     links: project.links.map((l) => ({ id: l.id, kind: l.kind, points: linkPoints(project, l), ...(LINKS[l.kind] ?? LINKS.elec) })),
     bounds: bounds(project),
   };
+}
+
+/** Etiqueta 3D: el nombre y, en torres y paneles, su altura. */
+function tag(c) {
+  if (c.type === 'aerogenerador' || c.type === 'rotor-eolico') return `${c.label} · ${param(c, 'altura')} m`;
+  if (c.type === 'panel-solar') return `${c.label} · ${param(c, 'altitud')} msnm`;
+  return c.label;
 }
 
 function bounds(project) {
@@ -7044,7 +7103,7 @@ function bounds(project) {
   return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, size: Math.max(2, x1 - x0, z1 - z0) };
 }
 
-return { SCALE, COLORS, LINKS, model, placement, port3d, linkPoints, pose, spinRate, scene };
+return { towerHeight, poleHeight, SCALE, COLORS, LINKS, model, placement, port3d, linkPoints, pose, spinRate, scene, tag };
 })();
 modules['src/editor/vista3d.js'] = (() => {
 // Vista 3D del proyecto con Three.js. Solo dibuja: el estado sale de la misma simulación que la vista 2D
@@ -7280,8 +7339,10 @@ async function createView3d(container, ctx) {
   function frame() {
     const desc = scene(ctx.project());
     orbit.target.set(desc.bounds.x, 0, desc.bounds.z);
-    orbit.dist = desc.bounds.size * 0.75 + 2.5;
-    orbit.theta = -0.3;
+    // Distancia para que quepa todo el ancho del proyecto con el campo de visión y la proporción de la vista.
+    const half = Math.tan(((camera.fov / 2) * Math.PI) / 180) * Math.max(0.6, camera.aspect || 1.5);
+    orbit.dist = Math.max(3, (desc.bounds.size / 2 / half) * 1.3 + 1.5);
+    orbit.theta = -0.15;
     orbit.phi = 0.85;
     table.position.set(desc.bounds.x, 0, desc.bounds.z);
     grid.position.set(Math.round(desc.bounds.x), 0.002, Math.round(desc.bounds.z));
@@ -7460,8 +7521,8 @@ async function createView3d(container, ctx) {
   el.addEventListener('contextmenu', noMenu);
 
   build();
-  frame();
   resize();
+  frame();
   raf = requestAnimationFrame(tick);
 
   return {
@@ -8039,7 +8100,7 @@ function paramFields(component) {
   return `<h4 class="label">Parámetros</h4>${definition(component.type).energy.params.map((p) => {
     const value = param(component, p.key);
     const input = p.options
-      ? `<select data-param="${p.key}">${p.options.map((o) => `<option value="${o}"${o === value ? ' selected' : ''}>${o} ${esc(p.unit)}</option>`).join('')}</select>`
+      ? `<select data-param="${p.key}">${p.options.map((o) => `<option value="${o}"${o === value ? ' selected' : ''}>${esc(p.labels?.[o] ?? `${o} ${p.unit}`)}</option>`).join('')}</select>`
       : `<input type="number" data-param="${p.key}" min="${p.min}" max="${p.max}" step="${p.step}" value="${value}">`;
     return `<label class="field">${esc(p.label)}${p.options ? '' : ` (${esc(p.unit)})`}${input}</label>`;
   }).join('')}`;

@@ -19,6 +19,10 @@ const agua = (id, label, side, at, extra) => P(id, label, side, at, 'agua', 'agu
 const param = (key, label, unit, def, min, max, step = 1) => ({ key, label, unit, default: def, min, max, step });
 const WATTS = (def, max = 20000, label = 'Potencia nominal') => param('watts', label, 'W', def, 1, max, 1);
 const VOLTS = (def) => ({ ...param('volts', 'Tensión', 'V', def, 12, 48, 12), options: [12, 24, 48] });
+// Exponente de Hellmann (perfil del viento con la altura) según el terreno.
+export const TERRENOS = { 0.1: 'Mar o lago (α = 0.10)', 0.143: 'Campo abierto (α = 1/7)', 0.2: 'Rural con árboles (α = 0.20)', 0.3: 'Ciudad (α = 0.30)' };
+const TERRENO = { ...param('terreno', 'Terreno alrededor', '', 0.143, 0.1, 0.3, 0.001), options: [0.1, 0.143, 0.2, 0.3], labels: TERRENOS };
+const ALTURA_TORRE = (def) => param('altura', 'Altura de la torre (buje)', 'm', def, 2, 150, 1);
 
 const T = (x, y, text, cls = 'glyph-text') => `<text class="${cls}" x="${x}" y="${y}" text-anchor="middle">${text}</text>`;
 const machine = (letter) => `<circle cx="40" cy="30" r="20"/>${T(40, 35, letter)}`;
@@ -48,22 +52,22 @@ export const ENERGY_CATALOG = [
     type: 'panel-solar', name: 'Panel solar fotovoltaico', prefix: 'PV', category: 'generacion', systems: S, w: 110, h: 70,
     ports: [pot('out', 'salida', 'r', 35, 'gen')],
     glyph: '<rect x="6" y="10" width="80" height="52"/><path d="M6 27 H86 M6 45 H86 M33 10 V62 M60 10 V62"/><circle cx="99" cy="12" r="6"/>',
-    note: 'Entrega potencia según la irradiancia (W/m²). Su tensión varía con el sol: a la batería se conecta con un controlador de carga.',
-    energy: { params: [WATTS(400, 10000, 'Potencia pico')] },
+    note: 'Entrega potencia según la irradiancia (W/m²). En sitios más altos sobre el nivel del mar llega más radiación (menos atmósfera); la altura de montaje solo cambia el dibujo 3D, porque unos metros más no cambian la radiación (solo evitan sombras). Su tensión varía con el sol: a la batería se conecta con un controlador de carga.',
+    energy: { params: [WATTS(400, 10000, 'Potencia pico'), param('altitud', 'Altitud del sitio', 'msnm', 0, 0, 5000, 10), param('altura', 'Altura de montaje', 'm', 1, 0, 30, 0.5)] },
   },
   {
     type: 'aerogenerador', name: 'Aerogenerador pequeño', prefix: 'WG', category: 'generacion', systems: S, w: 80, h: 90,
     ports: [pot('out', 'salida', 'r', 70, 'gen')],
     glyph: '<line x1="40" y1="40" x2="40" y2="86"/><path d="M40 40 L40 6 M40 40 L69 57 M40 40 L11 57" stroke-width="4"/><circle class="filled" cx="40" cy="40" r="4"/><rect x="33" y="84" width="14" height="5"/>',
-    note: 'Arranca con 3 m/s, da su potencia nominal desde 12 m/s y se frena arriba de 25 m/s. Se conecta a la batería con un controlador de carga.',
-    energy: { params: [WATTS(1000, 20000)] },
+    note: 'Arranca con 3 m/s, da su potencia nominal desde 12 m/s y se frena arriba de 25 m/s, medidos a la altura de su buje: entre más alta la torre, más viento (perfil de Hellmann según el terreno). Se conecta a la batería con un controlador de carga.',
+    energy: { params: [WATTS(1000, 20000), ALTURA_TORRE(10), TERRENO] },
   },
   {
     type: 'rotor-eolico', name: 'Rotor eólico (solo aspas y eje)', prefix: 'WR', category: 'generacion', systems: S, w: 80, h: 80,
     ports: [eje('eje', 'eje', 'r', 40, { required: true })],
     glyph: '<path d="M30 40 L30 6 M30 40 L59 57 M30 40 L1 57" stroke-width="4"/><circle class="filled" cx="30" cy="40" r="5"/><line class="shaft" x1="35" y1="40" x2="80" y2="40"/>',
     note: 'Convierte el viento en giro: P = ½·ρ·A·v³·Cp. Gira lento (cientos de rpm): para un generador o una bomba suele necesitar multiplicadora.',
-    energy: { params: [param('radio', 'Radio de las aspas', 'm', 1.5, 0.3, 20, 0.1)] },
+    energy: { params: [param('radio', 'Radio de las aspas', 'm', 1.5, 0.3, 20, 0.1), ALTURA_TORRE(10), TERRENO] },
   },
   {
     type: 'turbina-hidraulica', name: 'Turbina hidráulica (Pelton)', prefix: 'HT', category: 'generacion', systems: S, w: 90, h: 80,

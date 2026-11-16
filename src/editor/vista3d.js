@@ -231,8 +231,10 @@ export async function createView3d(container, ctx) {
   function frame() {
     const desc = scene(ctx.project());
     orbit.target.set(desc.bounds.x, 0, desc.bounds.z);
-    orbit.dist = desc.bounds.size * 0.75 + 2.5;
-    orbit.theta = -0.3;
+    // Distancia para que quepa todo el ancho del proyecto con el campo de visión y la proporción de la vista.
+    const half = Math.tan(((camera.fov / 2) * Math.PI) / 180) * Math.max(0.6, camera.aspect || 1.5);
+    orbit.dist = Math.max(3, (desc.bounds.size / 2 / half) * 1.3 + 1.5);
+    orbit.theta = -0.15;
     orbit.phi = 0.85;
     table.position.set(desc.bounds.x, 0, desc.bounds.z);
     grid.position.set(Math.round(desc.bounds.x), 0.002, Math.round(desc.bounds.z));
@@ -411,8 +413,8 @@ export async function createView3d(container, ctx) {
   el.addEventListener('contextmenu', noMenu);
 
   build();
-  frame();
   resize();
+  frame();
   raf = requestAnimationFrame(tick);
 
   return {
