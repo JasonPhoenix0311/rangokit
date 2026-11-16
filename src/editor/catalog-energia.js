@@ -21,8 +21,9 @@ const WATTS = (def, max = 20000, label = 'Potencia nominal') => param('watts', l
 const VOLTS = (def) => ({ ...param('volts', 'Tensión', 'V', def, 12, 48, 12), options: [12, 24, 48] });
 // Exponente de Hellmann (perfil del viento con la altura) según el terreno.
 export const TERRENOS = { 0.1: 'Mar o lago (α = 0.10)', 0.143: 'Campo abierto (α = 1/7)', 0.2: 'Rural con árboles (α = 0.20)', 0.3: 'Ciudad (α = 0.30)' };
-const TERRENO = { ...param('terreno', 'Terreno alrededor', '', 0.143, 0.1, 0.3, 0.001), options: [0.1, 0.143, 0.2, 0.3], labels: TERRENOS };
-const ALTURA_TORRE = (def) => param('altura', 'Altura de la torre (buje)', 'm', def, 2, 150, 1);
+// live: se puede cambiar durante la ejecución (pestaña Ejecución → Altura y sitio) sin detenerla.
+const TERRENO = { ...param('terreno', 'Terreno alrededor', '', 0.143, 0.1, 0.3, 0.001), options: [0.1, 0.143, 0.2, 0.3], labels: TERRENOS, live: true };
+const ALTURA_TORRE = (def) => ({ ...param('altura', 'Altura de la torre (buje)', 'm', def, 2, 150, 1), live: true });
 
 const T = (x, y, text, cls = 'glyph-text') => `<text class="${cls}" x="${x}" y="${y}" text-anchor="middle">${text}</text>`;
 const machine = (letter) => `<circle cx="40" cy="30" r="20"/>${T(40, 35, letter)}`;
@@ -53,7 +54,7 @@ export const ENERGY_CATALOG = [
     ports: [pot('out', 'salida', 'r', 35, 'gen')],
     glyph: '<rect x="6" y="10" width="80" height="52"/><path d="M6 27 H86 M6 45 H86 M33 10 V62 M60 10 V62"/><circle cx="99" cy="12" r="6"/>',
     note: 'Entrega potencia según la irradiancia (W/m²). En sitios más altos sobre el nivel del mar llega más radiación (menos atmósfera); la altura de montaje solo cambia el dibujo 3D, porque unos metros más no cambian la radiación (solo evitan sombras). Su tensión varía con el sol: a la batería se conecta con un controlador de carga.',
-    energy: { params: [WATTS(400, 10000, 'Potencia pico'), param('altitud', 'Altitud del sitio', 'msnm', 0, 0, 5000, 10), param('altura', 'Altura de montaje', 'm', 1, 0, 30, 0.5)] },
+    energy: { params: [WATTS(400, 10000, 'Potencia pico'), { ...param('altitud', 'Altitud del sitio', 'msnm', 0, 0, 5000, 10), live: true }, { ...param('altura', 'Altura de montaje', 'm', 1, 0, 30, 0.5), live: true }] },
   },
   {
     type: 'aerogenerador', name: 'Aerogenerador pequeño', prefix: 'WG', category: 'generacion', systems: S, w: 80, h: 90,

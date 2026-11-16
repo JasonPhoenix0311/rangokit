@@ -11,7 +11,7 @@ import { tankGlyph } from './catalog-energia.js';
 import { reviewEnergy, energyText, setEnv, ENV_CONTROLS, ESCALAS, ENERGY, ENERGY_SIMPLIFICATIONS, fmtW, fmtWh } from './energia.js';
 import { startConversation, respond, say, normalizeConversation, userText } from './dialog.js';
 import { createView3d } from './vista3d.js';
-import { TUTORIALS, tutorialOf, stepText, advanceTutorial, applyStep, canApply, stepTarget } from './tutorial.js';
+import { TUTORIALS, tutorialOf, stepText, advanceTutorial, applyStep, canApply, stepTarget, isLiveStep } from './tutorial.js';
 
 const LEARN_KEY = 'rangokit.aprendizaje';
 const USEFUL_KEY = 'rangokit.utiles';
@@ -781,6 +781,16 @@ const SIMPLIFICATIONS = `
     <p class="tip">Que funcione aquí no garantiza que funcione el circuito real. Revisa siempre antes de energizar.</p>
   </details>`;
 
+/** Controles en vivo de altura y sitio (torres y paneles), sin detener la simulación. */
+function liveParams() {
+  const rows = ed.project.components.flatMap((c) => (definition(c.type).energy?.params ?? [])
+    .filter((p) => p.live && !p.options)
+    .map((p) => `<label class="field">${esc(c.label)} · ${esc(p.label)} · <span id="run-live-${c.id}-${p.key}">${param(c, p.key)} ${esc(p.unit)}</span>
+      <input type="range" min="${p.min}" max="${p.key === 'altura' && p.max > 60 ? 100 : p.max}" step="${p.step}" value="${param(c, p.key)}" data-live="${c.id}" data-key="${p.key}"></label>`));
+  return rows.length ? `<h4 class="label">Altura y sitio</h4><div class="run-controls env">${rows.join('')}</div>
+    <p class="tip">Cambian la energía al momento. El terreno se elige en Selección.</p>` : '';
+}
+
 /** Pestaña de Ejecución: controles en vivo, estado de cilindros y del Arduino, y eventos. */
 function renderRunPanel(panel) {
   if (!ed.sim) {
@@ -825,6 +835,7 @@ function renderRunPanel(panel) {
         <select data-env="escala">${ESCALAS.map((e) => `<option value="${e.value}"${e.value === env.escala ? ' selected' : ''}>${esc(e.label)}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" data-env="dia"${env.dia ? ' checked' : ''}> Ciclo de un día (el sol sale a las 6 y se mete a las 18)</label>
     </div>
+    ${liveParams()}
     <h4 class="label">Energía en este momento</h4>
     <table class="pins live energy"><tbody>
       <tr><th scope="row">Generación</th><td id="run-e-gen">—</td></tr>
@@ -1295,6 +1306,15 @@ function highlightTutorial() {
   if (target.selector) mark(target.selector);
 }
 
+/** Aplica un control en vivo de Ejecución al parámetro del componente. */
+function setLiveParam(input) {
+  const component = ed.project.components.find((c) => c.id === input.dataset.live);
+  const p = definition(component.type).energy.params.find((x) => x.key === input.dataset.key);
+  component.config[p.key] = Math.max(p.min, Math.min(p.max, Number(input.value)));
+  const label = $(`run-live-${component.id}-${p.key}`);
+  if (label) label.textContent = `${component.config[p.key]} ${p.unit}`;
+}
+
 function startTutorial(id) {
   const tutorial = tutorialOf(id);
   const project = createProject({ name: `Tutorial · ${shortTitle(tutorial)}`, system: tutorial.system });
@@ -1505,9 +1525,10 @@ function bindEditor() {
     if (action === 'tutorial-do') {
       const state = ed.project.tutorial;
       const tutorial = tutorialOf(state.id);
-      stopSim('');
+      const step = tutorial.steps[state.step];
+      if (!isLiveStep(tutorial, step, ed.project)) stopSim('');
       try {
-        setStatus(applyStep(tutorial, tutorial.steps[state.step], ed.project));
+        setStatus(applyStep(tutorial, step, ed.project));
       } catch (error) {
         setStatus(error.message, 'warn');
       }
@@ -1734,12 +1755,17 @@ function bindEditor() {
 
   root.addEventListener('change', (event) => {
     const target = event.target;
-    if (ed.sim && !['ed-problem', 'ed-web-terms', 'ed-file', 'ed-search', 'ed-category'].includes(target.id) && !target.dataset.pot && !target.dataset.env) {
+    if (ed.sim && !['ed-problem', 'ed-web-terms', 'ed-file', 'ed-search', 'ed-category'].includes(target.id) && !target.dataset.pot && !target.dataset.env && !target.dataset.live) {
       stopSim('Detuve la simulación para que puedas editar.');
     }
     if (target.dataset.pot) return;
     if (target.dataset.env) {
       if (ed.sim) setEnv(ed.sim, target.dataset.env, target.type === 'checkbox' ? target.checked : target.value);
+      return;
+    }
+    if (target.dataset.live) {
+      setLiveParam(target);
+      touch();   // guarda, rehace la vista 3D y revisa el tutorial
       return;
     }
     if (target.id === 'ed-file') {
@@ -1849,6 +1875,10 @@ function bindEditor() {
   });
 
   root.addEventListener('input', (event) => {
+    if (event.target.dataset.live) {
+      setLiveParam(event.target);
+      return;
+    }
     if (event.target.dataset.env && ed.sim && event.target.type === 'range') {
       setEnv(ed.sim, event.target.dataset.env, event.target.value);
       return;

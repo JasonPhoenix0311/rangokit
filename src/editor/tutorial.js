@@ -150,8 +150,10 @@ export const TUTORIALS = [
       wire(['bat', 'bus'], ['lamp', 'in']),
       review(),
       run(),
-      env('viento', 10, 'En la pestaña Ejecución, mueve «Viento» a 10 m/s. Mira en el plano cómo cambian las rpm del rotor y del generador.', (e) => e.viento >= 9.5),
-      act('bat', 'Con ese viento, la batería debe decir «carga»: el generador la está cargando a través del controlador.', (s) => (s.watts ?? 0) > 1),
+      env('viento', 6, 'En la pestaña Ejecución, mueve «Viento (medido a 10 m de altura)» a 6 m/s, una brisa moderada. Mira en el plano las rpm del rotor y la potencia del generador.', (e) => e.viento >= 5.5 && e.viento <= 7),
+      act('bat', 'Con esa brisa, la batería debe decir «carga»: el generador la está cargando a través del controlador. Fíjate cuántos W entrega el generador G1.', (s) => (s.watts ?? 0) > 1),
+      setValue('rotor', 'altura', 30, 'Ahora sube la torre: en la pestaña Ejecución, sección «Altura y sitio», mueve la altura de la torre de WR1 de 10 a 30 m (o más). Entre más alto, el viento sopla más fuerte porque el suelo lo frena menos.', (v) => v >= 25),
+      act('gen', 'Compara: a 30 m el viento llega a ≈ 7 m/s y, como la potencia crece con el cubo del viento, el generador entrega casi el doble que a 10 m. Velo en el plano y en 3D (la torre crece).', (s) => (s.watts ?? 0) >= 350),
       env('viento', 2, 'Ahora baja el «Viento» a 2 m/s: el rotor arranca hasta los 3 m/s, así que se detiene.', (e) => e.viento < 3),
       act('bat', 'Sin viento, la batería debe decir «entrega»: ella mantiene encendida la lámpara.', (s) => (s.watts ?? 0) < -1),
       view3d(),
@@ -259,6 +261,13 @@ export function advanceTutorial(tutorial, current, ctx) {
   return i;
 }
 
+/** ¿El paso cambia un parámetro que se puede mover en vivo (sin detener la simulación)? */
+export function isLiveStep(tutorial, step, project) {
+  if (step.kind !== 'config') return false;
+  const comp = find(tutorial, project, step.as);
+  return Boolean(comp && definition(comp.type).energy?.params?.some((p) => p.key === step.key && p.live));
+}
+
 /** ¿El paso se puede hacer automático? Los de simulación son la prueba y los hace el usuario. */
 export const canApply = (step) => ['add', 'wire', 'config', 'rule'].includes(step.kind);
 
@@ -299,7 +308,10 @@ export function stepTarget(tutorial, step, project) {
       const ports = [step.a, step.b].map(([as, p]) => ({ c: find(tutorial, project, as)?.id, p })).filter((x) => x.c);
       return { ports };
     }
-    case 'config': return { component: find(tutorial, project, step.as)?.id, selector: step.key === 'ohms' ? '#ed-ohms' : `[data-param="${step.key}"]` };
+    case 'config': {
+      const id = find(tutorial, project, step.as)?.id;
+      return { component: id, selector: step.key === 'ohms' ? '#ed-ohms' : `[data-param="${step.key}"], input[data-live="${id}"][data-key="${step.key}"]` };
+    }
     case 'rule': return { selector: '[data-action="add-rule"]' };
     case 'review': return { selector: '#tab-revision' };
     case 'run': return { selector: '#ed-run' };

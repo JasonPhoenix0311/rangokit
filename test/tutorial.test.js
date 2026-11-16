@@ -17,7 +17,7 @@ const ACTIONS = {
   'tut-arduino': [(sim, t, p) => press(sim, find(t, p, 's').id, true)],
   'tut-electronica': [(sim, t, p) => toggle(sim, find(t, p, 's').id)],
   'tut-renovables': [() => {}, (sim) => setEnv(sim, 'sol', 0), () => {}],
-  'tut-eolica': [(sim) => setEnv(sim, 'viento', 10), (sim) => setEnv(sim, 'viento', 2)],
+  'tut-eolica': [(sim) => setEnv(sim, 'viento', 6), () => {}, (sim) => setEnv(sim, 'viento', 2)],
 };
 
 test('hay un tutorial por cada tipo de sistema', () => {
