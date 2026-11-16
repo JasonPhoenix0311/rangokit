@@ -131,6 +131,32 @@ export const TUTORIALS = [
       view3d(),
     ],
   },
+  {
+    id: 'tut-eolica',
+    system: 'renovables',
+    title: 'Energías renovables: aerogenerador con multiplicadora',
+    goal: 'El viento gira el rotor; la multiplicadora acelera el giro para el generador, que carga la batería. Sin viento, la batería mantiene encendida la lámpara.',
+    steps: [
+      add('rotor', 'rotor-eolico', [40, 120], 'Son las aspas: convierten el viento en giro, pero giran lento (unos cientos de rpm).'),
+      add('gb', 'multiplicadora', [180, 130], 'Caja de engranes que multiplica la velocidad del eje.'),
+      add('gen', 'generador', [340, 130], 'Necesita girar cerca de 1500 rpm para dar su potencia.'),
+      add('cc', 'controlador-carga', [480, 140]),
+      add('bat', 'bateria', [660, 60]),
+      add('lamp', 'lampara-cd', [680, 200], 'Es de 12 V, igual que la batería.'),
+      wire(['rotor', 'eje'], ['gb', 'lento'], 'Los puertos grises son ejes mecánicos: el rotor va al lado lento.'),
+      wire(['gb', 'rapido'], ['gen', 'eje'], 'El lado rápido mueve al generador (gira 4 veces más rápido que el rotor).'),
+      wire(['gen', 'out'], ['cc', 'in'], 'Los puertos rojos son de potencia.'),
+      wire(['cc', 'bat'], ['bat', 'bus']),
+      wire(['bat', 'bus'], ['lamp', 'in']),
+      review(),
+      run(),
+      env('viento', 10, 'En la pestaña Ejecución, mueve «Viento» a 10 m/s. Mira en el plano cómo cambian las rpm del rotor y del generador.', (e) => e.viento >= 9.5),
+      act('bat', 'Con ese viento, la batería debe decir «carga»: el generador la está cargando a través del controlador.', (s) => (s.watts ?? 0) > 1),
+      env('viento', 2, 'Ahora baja el «Viento» a 2 m/s: el rotor arranca hasta los 3 m/s, así que se detiene.', (e) => e.viento < 3),
+      act('bat', 'Sin viento, la batería debe decir «entrega»: ella mantiene encendida la lámpara.', (s) => (s.watts ?? 0) < -1),
+      view3d(),
+    ],
+  },
 ];
 
 export const tutorialOf = (id) => TUTORIALS.find((t) => t.id === id) ?? null;

@@ -17,11 +17,13 @@ const ACTIONS = {
   'tut-arduino': [(sim, t, p) => press(sim, find(t, p, 's').id, true)],
   'tut-electronica': [(sim, t, p) => toggle(sim, find(t, p, 's').id)],
   'tut-renovables': [() => {}, (sim) => setEnv(sim, 'sol', 0), () => {}],
+  'tut-eolica': [(sim) => setEnv(sim, 'viento', 10), (sim) => setEnv(sim, 'viento', 2)],
 };
 
 test('hay un tutorial por cada tipo de sistema', () => {
   const systems = SYSTEMS.filter((s) => s.id !== 'todos').map((s) => s.id);
-  assert.deepEqual(TUTORIALS.map((t) => t.system).sort(), [...systems].sort());
+  for (const system of systems) assert.ok(TUTORIALS.some((t) => t.system === system), `falta tutorial de ${system}`);
+  assert.equal(new Set(TUTORIALS.map((t) => t.id)).size, TUTORIALS.length);
   for (const t of TUTORIALS) {
     assert.ok(t.steps.length >= 8, t.id);
     assert.equal(t.steps.at(-1).kind, '3d', `${t.id} termina en la vista 3D`);
