@@ -342,3 +342,27 @@ textarea {
 .ed-comp.tut-target .ed-body { stroke: var(--fault); stroke-width: 3; stroke-dasharray: 6 4; }
 @keyframes tutpulse { 50% { outline-color: transparent; } }
 @media (prefers-reduced-motion: reduce) { .tut-target:not(g) { animation: none; } }
+
+/* Atlas: asistente de voz, flotante abajo a la derecha */
+.atlas-button { font-weight: 600; }
+.atlas-button[aria-pressed="true"] { background: var(--air); border-color: var(--air); color: var(--on-ink); }
+.atlas {
+  /* Abajo al centro, sobre el plano: no tapa el catálogo ni la tarjeta del tutorial. */
+  position: fixed; left: max(16px, calc(50% - 200px)); bottom: 12px; z-index: 30;
+  width: min(400px, calc(100vw - 32px)); max-height: min(400px, 48vh);
+  display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  background: var(--sheet); border: 1px solid var(--ink); border-top: 4px solid var(--air);
+  box-shadow: 0 10px 30px rgb(0 0 0 / .22);
+}
+.atlas[hidden] { display: none; }
+.atlas-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; padding: 10px 12px 4px; }
+.atlas-head h2 { font-family: var(--display); font-weight: 600; font-size: 20px; }
+.atlas-options .check { display: inline-flex; align-items: center; gap: 6px; }
+.atlas-options { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 12px 6px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.atlas .chat-log { min-height: 90px; padding: 10px 12px; gap: 8px; }
+.atlas .bubble { font-size: 14px; }
+.atlas-form { display: flex; gap: 8px; padding: 8px 12px 4px; border-top: 1px solid var(--line); }
+.atlas-form input { flex: 1; min-width: 0; }
+#atlas-mic[aria-pressed="true"] { background: var(--fault); border-color: var(--fault); animation: tutpulse 1.2s ease-in-out infinite; }
+.atlas > .tip { padding: 0 12px 10px; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) { #atlas-mic[aria-pressed="true"] { animation: none; } }

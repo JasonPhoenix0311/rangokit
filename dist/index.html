@@ -662,6 +662,30 @@ textarea {
 .ed-comp.tut-target .ed-body { stroke: var(--fault); stroke-width: 3; stroke-dasharray: 6 4; }
 @keyframes tutpulse { 50% { outline-color: transparent; } }
 @media (prefers-reduced-motion: reduce) { .tut-target:not(g) { animation: none; } }
+
+/* Atlas: asistente de voz, flotante abajo a la derecha */
+.atlas-button { font-weight: 600; }
+.atlas-button[aria-pressed="true"] { background: var(--air); border-color: var(--air); color: var(--on-ink); }
+.atlas {
+  /* Abajo al centro, sobre el plano: no tapa el catálogo ni la tarjeta del tutorial. */
+  position: fixed; left: max(16px, calc(50% - 200px)); bottom: 12px; z-index: 30;
+  width: min(400px, calc(100vw - 32px)); max-height: min(400px, 48vh);
+  display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  background: var(--sheet); border: 1px solid var(--ink); border-top: 4px solid var(--air);
+  box-shadow: 0 10px 30px rgb(0 0 0 / .22);
+}
+.atlas[hidden] { display: none; }
+.atlas-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; padding: 10px 12px 4px; }
+.atlas-head h2 { font-family: var(--display); font-weight: 600; font-size: 20px; }
+.atlas-options .check { display: inline-flex; align-items: center; gap: 6px; }
+.atlas-options { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 12px 6px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.atlas .chat-log { min-height: 90px; padding: 10px 12px; gap: 8px; }
+.atlas .bubble { font-size: 14px; }
+.atlas-form { display: flex; gap: 8px; padding: 8px 12px 4px; border-top: 1px solid var(--line); }
+.atlas-form input { flex: 1; min-width: 0; }
+#atlas-mic[aria-pressed="true"] { background: var(--fault); border-color: var(--fault); animation: tutpulse 1.2s ease-in-out infinite; }
+.atlas > .tip { padding: 0 12px 10px; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) { #atlas-mic[aria-pressed="true"] { animation: none; } }
 </style>
 
 <div class="app">
@@ -6868,6 +6892,366 @@ function stepTarget(tutorial, step, project) {
 
 return { TUTORIALS, tutorialOf, find, stepText, stepDone, advanceTutorial, isLiveStep, canApply, applyStep, stepTarget };
 })();
+modules['src/editor/atlas.js'] = (() => {
+// Atlas: el asistente de voz del laboratorio.
+//
+// Entiende comandos hablados o escritos, lee el estado del proyecto y de la simulación y da
+// recomendaciones con un tono cercano. Todo sale de reglas sobre el proyecto y la simulación:
+// no usa IA generativa, no inventa datos y dice cuándo no entendió.
+//
+// Sin DOM: la interfaz arma el contexto, ejecuta las acciones que devuelve parseCommand y se
+// encarga del micrófono (SpeechRecognition) y de la voz (speechSynthesis).
+const { CATALOG, definition, fold, param } = modules['src/editor/catalog.js'];
+const { windAtHeight, fmtW } = modules['src/editor/energia.js'];
+
+const ATLAS = {
+  name: 'Atlas',
+  lang: 'es-MX',
+  COOLDOWN: 45,      // s antes de repetir el mismo consejo
+  BAT_LOW: 25,       // % de batería en que avisa
+  LOW_TOWER: 12,     // m: una torre así de baja casi no aprovecha el viento
+};
+
+// ── Comandos ──
+const STOP = new Set(['un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'de', 'del', 'al', 'a', 'y', 'con', 'por', 'favor',
+  'me', 'mi', 'te', 'que', 'en', 'para', 'otro', 'otra', 'nuevo', 'nueva', 'plano', 'proyecto', 'componente', 'porfa', 'atlas']);
+const NUMBERS = {
+  cero: 0, uno: 1, una: 1, un: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  once: 11, doce: 12, quince: 15, veinte: 20, veinticinco: 25, treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60,
+  setenta: 70, ochenta: 80, noventa: 90, cien: 100, ciento: 100, mil: 1000,
+};
+// Otras formas de llamar a los componentes, para que se entiendan como se dicen en voz alta.
+const SPOKEN = {
+  aerogenerador: 'molino viento eolico eolica turbina',
+  'rotor-eolico': 'aspas molino',
+  'panel-solar': 'placa celda fotovoltaica',
+  bateria: 'pila acumulador',
+  'red-electrica': 'cfe luz',
+  'foco-ca': 'foco bombilla',
+  'carga-casa': 'casa hogar',
+  'arduino-uno': 'arduino',
+  'cilindro-se': 'piston',
+  'cilindro-de': 'piston',
+  'controlador-carga': 'controlador regulador mppt',
+  'fuente-aire': 'aire compresor',
+  'multiplicadora': 'engranes caja',
+  'turbina-hidraulica': 'hidraulica pelton',
+};
+const ENV_WORDS = [
+  { key: 'viento', re: /\b(viento|aire sopla)\b/, delta: 2, unit: 'm/s' },
+  { key: 'sol', re: /\b(sol|radiacion|irradiancia|luz solar)\b/, delta: 200, unit: 'W/m²' },
+  { key: 'rio', re: /\b(rio|caudal|corriente de agua)\b/, delta: 5, unit: 'L/s' },
+];
+const WIND_TYPES = new Set(['aerogenerador', 'rotor-eolico']);
+
+const stem = (w) => w.replace(/(es|s)$/, '');
+const words = (text) => text.split(/[^a-z0-9/]+/).filter(Boolean);
+
+/** Texto hablado en minúsculas, sin acentos ni signos, y sin el nombre de Atlas al inicio. */
+function clean(text) {
+  return fold(String(text ?? ''))
+    .replace(/[¿?¡!.,;:«»"]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(oye |hola )?atlas\b\s*/, '');
+}
+
+/** Primer número del texto, escrito con cifras o con palabras («treinta», «8,5»). */
+function numberIn(text) {
+  const digits = text.match(/(\d+(?:[.,]\d+)?)/);
+  if (digits) return Number(digits[1].replace(',', '.'));
+  let total = null;
+  for (const w of words(text)) {
+    if (w in NUMBERS && !['un', 'una'].includes(w)) total = (total ?? 0) + NUMBERS[w];
+    else if (total !== null && w !== 'y') break;
+  }
+  return total;
+}
+
+/** Componente del catálogo que mejor coincide con lo que se pidió, o null. */
+function matchComponent(text, system = 'todos') {
+  const asked = words(text).filter((w) => !STOP.has(w) && w.length > 1).map(stem);
+  if (!asked.length) return null;
+  let best = null;
+  for (const def of CATALOG) {
+    const own = words(fold(`${def.name} ${SPOKEN[def.type] ?? ''}`)).map(stem);
+    let score = 0;
+    for (const w of asked) {
+      if (own.includes(w)) score += 2;
+      else if (w.length >= 4 && own.some((o) => o.startsWith(w) || (o.length >= 4 && w.startsWith(o)))) score += 1;
+    }
+    if (score < 2) continue;
+    if (system !== 'todos' && def.systems.includes(system)) score += 0.5;
+    if (!best || score > best.score || (score === best.score && def.name.length < best.def.name.length)) best = { def, score };
+  }
+  return best?.def ?? null;
+}
+
+/** Quita las etiquetas de componentes («WG1», «w g 1») para que su número no se confunda con un valor. */
+function withoutLabels(text, project) {
+  let out = text;
+  for (const c of project?.components ?? []) {
+    const chars = [...fold(c.label).replace(/\s+/g, '')].map((ch) => ch.replace(/[^a-z0-9]/g, '\\$&'));
+    if (chars.length) out = out.replace(new RegExp(`\\b${chars.join('\\s*')}\\b`, 'g'), ' ');
+  }
+  return out;
+}
+
+/** Componente del proyecto que se nombra por su etiqueta («WG1», «w g 1», «s1»). */
+function componentIn(text, project) {
+  const compact = text.replace(/\s+/g, '');
+  const found = project.components
+    .map((c) => ({ c, label: fold(c.label).replace(/\s+/g, '') }))
+    .filter(({ label }) => label && compact.includes(label))
+    .sort((a, b) => b.label.length - a.label.length);
+  return found[0]?.c ?? null;
+}
+
+/**
+ * Convierte lo que dijo el usuario en una acción para la interfaz.
+ * Devuelve { action, ... } y, si no lo entiende, { action: 'unknown' }.
+ */
+function parseCommand(input, project) {
+  const t = clean(input);
+  if (!t) return { action: 'unknown', text: t };
+  const has = (re) => re.test(t);
+
+  if (has(/^(silencio|callate|calla|deja de hablar|sin voz|apaga (la|tu) voz|mute)/)) return { action: 'mute' };
+  if (has(/^(habla|activa (la|tu) voz|con voz|enciende (la|tu) voz)/)) return { action: 'unmute' };
+  if (has(/^(ayuda|que puedes hacer|que (te )?puedo decir|comandos|que sabes hacer)/)) return { action: 'help' };
+
+  // «Pon el viento a 8» o «pon la torre a 30» no son para agregar: los atiende la parte de ambiente.
+  const value = numberIn(withoutLabels(t, project));
+  const setting = (ENV_WORDS.some((e) => e.re.test(t)) || has(/\b(torre|altura|altitud)\b/))
+    && (value !== null || has(/\b(sube|subir|baja|bajar|mas|menos|aumenta|disminuye)\b/));
+  if (!setting && has(/^(agrega|agregame|anade|pon|ponme|coloca|inserta|mete|necesito un|necesito una|quiero un|quiero una)\b/)) {
+    const rest = t.replace(/^(necesito|quiero)\s+/, '').replace(/^\S+\s*/, '');
+    const def = matchComponent(rest, project?.system);
+    if (def) return { action: 'add', type: def.type };
+    if (words(t).length >= 5) return { action: 'rango', text: String(input).trim() };
+    return { action: 'add-unknown', text: rest };
+  }
+
+  if (has(/^(hazlo (por mi|tu)|haz (el|este) paso|siguiente paso|paso siguiente|ayudame con (el|este) paso)/)) return { action: 'tutorial-do' };
+  if (has(/^(repite|que sigue|que hago|que (debo|tengo que) hacer|en que paso|cual es el paso)/)) return { action: 'repeat' };
+
+  if (has(/^(reinicia|reiniciar|empieza de nuevo la simulacion|vuelve a empezar)/)) return { action: 'restart' };
+  if (has(/^(deten|detener|detente|para|parar|alto|stop|pausa|apaga la simulacion|termina la simulacion)\b/)) return { action: 'stop' };
+  if (has(/^(ejecuta|ejecutar|corre|correr|arranca|arrancar|inicia|iniciar|empieza|simula|simular|prueba(lo)?|dale|play|enciende (la simulacion|el sistema))\b/)) return { action: 'run' };
+
+  if (has(/\b(3d|3 d|tres d|tercera dimension|vista real|en 3d)\b/)) return { action: 'view', mode: '3d' };
+  if (has(/\b(2d|2 d|dos d|esquema|diagrama|vista plana|el plano)\b/)) return { action: 'view', mode: '2d' };
+  if (has(/^(ajusta|centra|encuadra|acomoda la vista)/)) return { action: 'fit' };
+
+  // Altura de la torre o del panel, y altitud del sitio.
+  if (has(/\baltitud\b/) && value !== null) return { action: 'param', key: 'altitud', value, target: componentIn(t, project)?.id ?? null };
+  if (has(/\b(torre|altura|alto|eleva|levanta)\b/) && !has(/\baltitud\b/)) {
+    const target = componentIn(t, project)?.id ?? null;
+    if (value !== null) return { action: 'param', key: 'altura', value, target, tower: has(/\btorre\b/) };
+    if (has(/\b(sube|subir|eleva|levanta|mas alt)/)) return { action: 'param', key: 'altura', delta: 10, target, tower: has(/\btorre\b/) };
+    if (has(/\b(baja|bajar|mas baj)/)) return { action: 'param', key: 'altura', delta: -10, target, tower: has(/\btorre\b/) };
+  }
+
+  for (const e of ENV_WORDS) {
+    if (!has(e.re)) continue;
+    if (value !== null) return { action: 'env', key: e.key, value };
+    if (has(/\b(sube|subir|aumenta|mas|fuerte)\b/)) return { action: 'env', key: e.key, delta: e.delta };
+    if (has(/\b(baja|bajar|disminuye|menos|quita|debil)\b/)) return { action: 'env', key: e.key, delta: -e.delta };
+  }
+
+  if (has(/^(suelta|soltar|deja de presionar)/)) return { action: 'release' };
+  if (has(/^(presiona|oprime|aprieta|acciona|pulsa|activa|enciende|apaga|cambia|mueve)\b/)) {
+    const c = componentIn(t, project);
+    return c ? { action: 'press', id: c.id } : { action: 'press-unknown' };
+  }
+
+  if (has(/^(revisa|revisalo|hay errores|que (esta mal|falla|falta)|por que no|porque no|que problema|encuentra (el|los) (error|errores|problema))/)) return { action: 'review' };
+  if (has(/^(como va|como vamos|como esta|estado|resumen|cuanta energia|que pasa|dime el estado|reporte)/) || has(/\b(bateria|energia)\b.*\b(como|cuanta|cuanto)\b/)) return { action: 'status' };
+
+  // Un problema descrito con palabras se lo pasa a Rango, que sabe proponer cómo armarlo.
+  if (has(/^(quiero|necesito|como (hago|puedo|armo)|ayudame a|me gustaria|tengo que)\b/) || words(t).length >= 9) return { action: 'rango', text: String(input).trim() };
+  return { action: 'unknown', text: t };
+}
+
+const HELP = [
+  '«Agrega un panel solar», «agrega una batería»',
+  '«Ejecuta», «detén», «reinicia»',
+  '«Sube el viento a 8», «sol a 1000», «más viento»',
+  '«Torre a 30 metros», «altitud 2000»',
+  '«Presiona S1», «suelta»',
+  '«Vista 3D», «vista 2D», «ajusta»',
+  '«¿Qué sigue?», «hazlo por mí» (tutoriales)',
+  '«Revisa», «¿cómo va?»',
+  '«Quiero regar mi jardín con energía solar» (se lo paso a Rango)',
+  '«Silencio» o «habla»',
+];
+
+// ── Frases ──
+const PRAISE = ['¡Muy bien!', '¡Eso es!', '¡Excelente!', '¡Bien hecho!', '¡Perfecto!'];
+const CALM = ['Sin problema, tiene arreglo.', 'Es un detalle muy común.', 'Vamos a revisarlo juntos.'];
+/** Frase que cambia según un contador, para que Atlas no repita siempre lo mismo. */
+const praise = (n = 0) => PRAISE[Math.abs(n) % PRAISE.length];
+const calm = (n = 0) => CALM[Math.abs(n) % CALM.length];
+
+function greet(project) {
+  if (project.tutorial) return `Hola, soy ${ATLAS.name}. Te acompaño en este tutorial: te voy diciendo cada paso y te aviso cuando lo logres.`;
+  if (!project.components.length) return `Hola, soy ${ATLAS.name}. Para empezar, dime por ejemplo «agrega un panel solar», o descríbeme lo que quieres construir.`;
+  return `Hola, soy ${ATLAS.name}. Tu proyecto tiene ${project.components.length} componentes. Dime «revisa» y lo reviso contigo, o «ejecuta» para probarlo.`;
+}
+
+/** Lo que dice Atlas al iniciar la simulación. */
+function onRun(findings, n = 0) {
+  const errors = findings.filter((f) => f.level === 'error');
+  if (!errors.length) return `${praise(n)} Todo está bien conectado. Ya está en marcha; prueba los controles y mira cómo fluye la energía.`;
+  return `Lo puse en marcha, pero ${errors.length === 1 ? 'hay un error' : `hay ${errors.length} errores`} en la revisión. ${calm(n)} El primero: ${errors[0].text}`;
+}
+
+/** Lo que dice Atlas al pedirle que revise el proyecto. */
+function reviewSpeech(findings, project, n = 0) {
+  if (!project.components.length) return 'Todavía no hay nada en el plano. Dime qué componente agrego o abre un tutorial.';
+  const errors = findings.filter((f) => f.level === 'error');
+  const notes = findings.filter((f) => f.level !== 'error');
+  if (!errors.length && !notes.length) return `${praise(n)} No encuentro ningún error. Dime «ejecuta» y lo probamos.`;
+  if (!errors.length) return `No hay errores. Tengo ${notes.length === 1 ? 'una observación' : `${notes.length} observaciones`}; la más importante: ${notes[0].text}`;
+  const fix = errors[0].suggest?.[0]?.text;
+  return `${calm(n)} ${errors.length === 1 ? 'Encontré un error' : `Encontré ${errors.length} errores`}. ${errors[0].text}${fix ? ` Te sugiero: ${fix}` : ''}`;
+}
+
+/** Resumen del momento: energía, batería y lo que está pasando. */
+function statusSpeech(ctx) {
+  const { project, sim } = ctx;
+  if (!sim) return `El proyecto está detenido, con ${project.components.length} componentes. Dime «ejecuta» para ponerlo en marcha.`;
+  const seconds = Math.round(sim.t);
+  const parts = [`Lleva ${seconds} ${seconds === 1 ? 'segundo' : 'segundos'} en marcha.`];
+  if (sim.energy?.has) {
+    const { now } = sim.energy;
+    parts.push(`Se generan ${fmtW(now.gen)} y se consumen ${fmtW(now.consumo)}.`);
+    for (const c of project.components.filter((x) => x.type === 'bateria')) {
+      const part = sim.parts.get(c.id);
+      parts.push(`${c.label} va en ${Math.round(part.soc)} % y está ${part.watts > 1 ? 'cargando' : part.watts < -1 ? 'entregando energía' : 'en reposo'}.`);
+    }
+    if (now.red > 1) parts.push(`Se toman ${fmtW(now.red)} de la red.`);
+    if (now.red < -1) parts.push(`Se venden ${fmtW(-now.red)} a la red.`);
+  }
+  for (const c of project.components.filter((x) => x.type.startsWith('cilindro'))) {
+    parts.push(`${c.label} está al ${Math.round(sim.parts.get(c.id).pos)} %.`);
+  }
+  return parts.join(' ');
+}
+
+/** Texto del paso de tutorial dicho en voz alta. */
+function stepSpeech(step, index, total, n = 0, advanced = false) {
+  const lead = advanced ? `${praise(n)} ` : '';
+  return `${lead}Paso ${index + 1} de ${total}: ${step.title}. ${step.body}`;
+}
+
+const FINISHED = '¡Lo lograste! Terminaste el tutorial y comprobaste que el proyecto funciona. Ahora puedes cambiarlo a tu gusto.';
+
+// ── Recomendaciones ──
+/**
+ * Consejos que aplican en este momento, de más a menos importantes.
+ * ctx: { project, sim, findings }. Cada consejo: { id, text, level } (level: 'error' | 'aviso' | 'idea').
+ */
+function advise(ctx) {
+  const { project, sim, findings = [] } = ctx;
+  const tips = [];
+  const errors = findings.filter((f) => f.level === 'error');
+  if (errors.length && !sim) {
+    const f = errors[0];
+    const fix = f.suggest?.[0]?.text;
+    tips.push({ id: `err:${f.code}:${(f.where ?? []).join(',')}`, level: 'error', text: `Ojo, encontré algo: ${f.text}${fix ? ` ${fix}` : ''}` });
+  }
+  if (sim?.energy?.has) {
+    const { now } = sim.energy;
+    for (const c of project.components.filter((x) => x.type === 'bateria')) {
+      const part = sim.parts.get(c.id);
+      if (part.soc < ATLAS.BAT_LOW && part.watts < -1) {
+        tips.push({ id: `bat-baja:${c.id}`, level: 'aviso', text: `${c.label} va en ${Math.round(part.soc)} % y se sigue descargando. Puedes agregar otro panel, subir la torre del aerogenerador o apagar alguna carga.` });
+      }
+      if (part.soc >= 99 && now.gen > now.consumo + 1 && !project.components.some((x) => x.type === 'red-electrica')) {
+        tips.push({ id: `bat-llena:${c.id}`, level: 'idea', text: `${c.label} ya está llena y sobra energía que se está desperdiciando. Podrías conectar la red eléctrica para venderla o agregar otra carga útil, como una bomba de agua.` });
+      }
+    }
+    if (now.consumo > 1 && now.red > now.consumo * 0.5) {
+      tips.push({ id: 'red-alta', level: 'idea', text: `Más de la mitad de tu consumo viene de la red: ${fmtW(now.red)}. Con más paneles o una batería tu sistema sería más independiente.` });
+    }
+    for (const c of project.components.filter((x) => WIND_TYPES.has(x.type))) {
+      const h = param(c, 'altura');
+      if (h > ATLAS.LOW_TOWER || sim.env.viento <= 0) continue;
+      const alpha = param(c, 'terreno');
+      const v = windAtHeight(sim.env.viento, h, alpha);
+      const v30 = windAtHeight(sim.env.viento, 30, alpha);
+      tips.push({ id: `torre:${c.id}`, level: 'idea', text: `Un consejo: ${c.label} está a ${h} m. A 30 m el viento pasaría de ${v.toFixed(1)} a ${v30.toFixed(1)} m/s, y como la potencia crece con el cubo del viento, daría unas ${((v30 / v) ** 3).toFixed(1)} veces más energía. Di «torre a 30».` });
+    }
+  }
+  return tips;
+}
+
+/**
+ * Elige el consejo que conviene decir ahora: el primero que no se haya dicho hace poco.
+ * memory es un Map id → segundo en que se dijo; se actualiza con el elegido.
+ */
+function pickTip(tips, memory, now, cooldown = ATLAS.COOLDOWN) {
+  const tip = tips.find((t) => !memory.has(t.id) || now - memory.get(t.id) >= cooldown);
+  if (tip) memory.set(tip.id, now);
+  return tip ?? null;
+}
+
+// ── Voz ──
+/** Adapta un texto para que la voz lo lea bien: unidades, flechas y signos. */
+function speakable(text) {
+  return String(text)
+    .replace(/[«»"“”▶■↺]/g, '')
+    .replace(/→/g, ' a ')
+    .replace(/≈/g, 'aproximadamente ')
+    .replace(/W\/m²/g, 'watts por metro cuadrado')
+    .replace(/(\d)\s?m\/s\b/g, '$1 metros por segundo')
+    .replace(/(\d)\s?kWh\b/g, '$1 kilowatts hora')
+    .replace(/(\d)\s?Wh\b/g, '$1 watts hora')
+    .replace(/(\d)\s?kW\b/g, '$1 kilowatts')
+    .replace(/(\d)\s?W\b/g, '$1 watts')
+    .replace(/(\d)\s?V\b/g, '$1 volts')
+    .replace(/(\d)\s?L\/s\b/g, '$1 litros por segundo')
+    .replace(/(\d)\s?msnm\b/g, '$1 metros sobre el nivel del mar')
+    .replace(/(\d)\s?m\b/g, '$1 metros')
+    .replace(/(\d)\s?s\b/g, '$1 segundos')
+    .replace(/\s?%/g, ' por ciento')
+    .replace(/(\d)\s?°/g, '$1 grados')
+    .replace(/\bCD\b/g, 'C D')
+    .replace(/\bCA\b/g, 'C A')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Mejor voz en español disponible: primero de México, luego de Latinoamérica, luego cualquiera. */
+function chooseVoice(voices) {
+  const es = voices.filter((v) => /^es/i.test(v.lang));
+  const rank = (v) => (/es[-_]MX/i.test(v.lang) ? 0 : /es[-_](US|419|CO|AR|CL|PE)/i.test(v.lang) ? 1 : 2) - (/(natural|online|neural)/i.test(v.name) ? 0.5 : 0);
+  return [...es].sort((a, b) => rank(a) - rank(b))[0] ?? null;
+}
+
+/** Nombre del componente en minúsculas, para frases como «Agregué WG1, aerogenerador pequeño». */
+const nameOf = (type) => definition(type).name.charAt(0).toLowerCase() + definition(type).name.slice(1);
+
+/** Nombre corto para decirlo en voz alta, sin lo que va entre paréntesis. */
+const spokenName = (type) => nameOf(type).replace(/\s*\(.*?\)\s*/g, ' ').trim();
+
+const ENV_SPOKEN = { viento: 'viento', sol: 'sol', rio: 'río' };
+/** Frase que se le puede decir a Atlas para hacer un paso de tutorial, o '' si ese paso no se hace por voz. */
+function voiceHint(step) {
+  switch (step.kind) {
+    case 'add': return `agrega ${spokenName(step.type)}`;
+    case 'run': return 'ejecuta';
+    case 'review': return 'revisa';
+    case '3d': return 'vista 3D';
+    case 'env': return typeof step.value === 'number' && ENV_SPOKEN[step.key] ? `${ENV_SPOKEN[step.key]} a ${step.value}` : '';
+    case 'config': return step.key === 'altura' ? `torre a ${step.value}` : step.key === 'altitud' ? `altitud ${step.value}` : '';
+    default: return '';
+  }
+}
+
+return { ATLAS, clean, numberIn, matchComponent, componentIn, parseCommand, HELP, praise, calm, greet, onRun, reviewSpeech, statusSpeech, stepSpeech, FINISHED, advise, pickTip, speakable, chooseVoice, nameOf, spokenName, voiceHint };
+})();
 modules['src/editor/escena3d.js'] = (() => {
 // Vista 3D: descripción de la escena sin depender de WebGL ni de Three.js, para poder probarla.
 //
@@ -7565,7 +7949,8 @@ const { SEARCH, searchProjects, rankRepos } = modules['src/editor/web.js'];
 const { createSim, advance, press, toggle, setValue, view, interaction, SIM } = modules['src/editor/sim.js'];
 const { cylinderGlyph, param } = modules['src/editor/catalog.js'];
 const { tankGlyph } = modules['src/editor/catalog-energia.js'];
-const { reviewEnergy, energyText, setEnv, ENV_CONTROLS, ESCALAS, ENERGY, ENERGY_SIMPLIFICATIONS, fmtW, fmtWh } = modules['src/editor/energia.js'];
+const { reviewEnergy, energyText, setEnv, ENV_CONTROLS, ESCALAS, ENERGY, ENERGY_SIMPLIFICATIONS, fmtW, fmtWh, windAtHeight } = modules['src/editor/energia.js'];
+const { ATLAS, parseCommand, HELP, greet, onRun, reviewSpeech, statusSpeech, stepSpeech, FINISHED, advise, pickTip, speakable, chooseVoice, nameOf, calm, voiceHint } = modules['src/editor/atlas.js'];
 const { startConversation, respond, say, normalizeConversation, userText } = modules['src/editor/dialog.js'];
 const { createView3d } = modules['src/editor/vista3d.js'];
 const { TUTORIALS, tutorialOf, stepText, advanceTutorial, applyStep, canApply, stepTarget, isLiveStep } = modules['src/editor/tutorial.js'];
@@ -7721,6 +8106,8 @@ const ed = {
   mode3d: false,
   v3d: null,
   v3dLoading: false,
+  // Atlas: preferencias (se cargan al iniciar) y lo que va diciendo.
+  atlas: { activo: false, voz: true, avisos: true, listening: false, log: [], memory: new Map(), heard: new Set(), n: 0, lastStep: null },
 };
 
 // Almacenamiento local. Si el navegador lo bloquea, el editor sigue funcionando y se avisa.
@@ -7753,6 +8140,7 @@ function touch() {
   // y actualiza la vista 3D, sin importar desde qué parte de la interfaz se hizo.
   sync3d();
   renderTutorial();
+  atlasAfterEdit();
 }
 
 /** La vista 3D se rehace al momento si está a la vista; si está oculta, al volver a mostrarla. */
@@ -7788,6 +8176,8 @@ function showSection(name) {
 // Lista de proyectos.
 function renderList() {
   stopSim('');
+  atlasStopListening();
+  atlasQuiet();
   ed.view = 'list';
   ed.project = null;
   const items = [...ed.projects].sort((a, b) => b.updated.localeCompare(a.updated));
@@ -7884,6 +8274,7 @@ function renderEditor() {
         <label class="ed-name"><span class="label">Proyecto</span><input id="ed-name" value="${esc(p.name)}" maxlength="80"></label>
         <span class="tip">${esc(systemLabel(p.system))}</span>
         <button type="button" class="chat-button" data-action="chat-open">Platicar con Rango</button>
+        <button type="button" class="atlas-button" data-action="atlas-toggle" aria-pressed="false" title="Asistente de voz (Alt+A para hablar)">◉ Atlas</button>
         <div class="runs" role="group" aria-label="Simulación">
           <button type="button" class="primary run-button" id="ed-run" data-action="run">▶ Ejecutar</button>
           <button type="button" id="ed-restart" data-action="restart" hidden>↺ Reiniciar</button>
@@ -7936,6 +8327,26 @@ function renderEditor() {
       </aside>
       <section class="arduino-panel" id="ed-arduino" aria-label="Arduino" hidden></section>
       <div class="ed-menu" id="ed-menu" role="menu" aria-label="Opciones" hidden></div>
+      <section class="atlas" id="atlas" aria-labelledby="atlas-title" hidden>
+        <header class="atlas-head">
+          <div>
+            <h2 id="atlas-title">Atlas</h2>
+            <p class="tip">Tu asistente del laboratorio</p>
+          </div>
+          <button type="button" data-action="atlas-toggle" aria-label="Cerrar Atlas">✕</button>
+        </header>
+        <div class="atlas-options">
+          <label class="check"><input type="checkbox" data-atlas="voz"${ed.atlas.voz ? ' checked' : ''}> Voz</label>
+          <label class="check"><input type="checkbox" data-atlas="avisos"${ed.atlas.avisos ? ' checked' : ''}> Consejos automáticos</label>
+        </div>
+        <ol class="atlas-log chat-log" id="atlas-log" aria-live="polite"></ol>
+        <form class="atlas-form" id="atlas-form">
+          <button type="button" class="primary" id="atlas-mic" data-action="atlas-mic" aria-pressed="false">🎤 Hablar</button>
+          <label class="visually-hidden" for="atlas-input">Comando para Atlas</label>
+          <input id="atlas-input" maxlength="300" autocomplete="off" placeholder="O escribe: «agrega un panel solar»">
+        </form>
+        <p class="tip">${Recognition ? 'Alt+A también activa el micrófono. El navegador transcribe tu voz con su propio servicio (en Chrome y Edge, en línea); Atlas no graba audio.' : 'Este navegador no reconoce la voz: escribe los comandos. En Chrome o Edge puedes hablarle.'}</p>
+      </section>
       <dialog class="chat" id="rango-chat" aria-labelledby="chat-title">
         <header class="chat-head">
           <div>
@@ -7961,6 +8372,13 @@ function renderEditor() {
   renderCanvas();
   renderInspector();
   renderArduino();
+  renderAtlas();
+  if (ed.atlas.activo && ed.atlas.greeted !== p.id) {
+    ed.atlas.greeted = p.id;
+    ed.atlas.log = [];
+    ed.atlas.lastStep = null;
+    atlasSay(greet(p));
+  }
   renderTutorial();
   if (!ed.storageOk) setStatus('Este navegador no permite guardar. Exporta el archivo para no perder el proyecto.', 'warn');
 }
@@ -8520,6 +8938,7 @@ function simLoop(now) {
   }
   updateRunPanel();
   if (updateTutorial()) renderTutorial();
+  atlasWatch();
   ed.simFrame = requestAnimationFrame(simLoop);
 }
 
@@ -8538,6 +8957,13 @@ function startSim() {
   setStatus(errors
     ? `En ejecución, pero hay ${errors === 1 ? 'un error' : `${errors} errores`} en Revisión: la simulación puede no reflejar lo que pasaría en el circuito real.`
     : 'En ejecución. Mantén presionados los pulsadores con el mouse o usa los controles de la pestaña Ejecución.', errors ? 'warn' : '');
+  if (ed.atlas.activo) {
+    ed.atlas.heard = new Set();
+    ed.atlas.lastWatch = -1;
+    ed.atlas.lastTip = 0;   // deja unos segundos antes del primer consejo
+    // En un tutorial sin errores, el paso siguiente ya lo anuncia el tutorial.
+    if (errors || !ed.project.tutorial) atlasSay(onRun(review(), ed.atlas.n++));
+  }
   ed.simLast = performance.now();
   cancelAnimationFrame(ed.simFrame);
   ed.simFrame = requestAnimationFrame(simLoop);
@@ -8846,6 +9272,7 @@ function renderTutorial() {
       <details><summary>Todos los pasos</summary><p class="tip">${esc(tutorial.goal)}</p><ol class="tutorial-steps">${list}</ol></details>`;
   }
   highlightTutorial();
+  atlasTutorial();
 }
 
 /** Marca en pantalla lo que hay que tocar en el paso actual. */
@@ -8880,6 +9307,352 @@ function startTutorial(id) {
   saveAll();
   openProject(project.id);
   setStatus('Tutorial iniciado: sigue los pasos de la tarjeta de la derecha. Lo que debes tocar se marca en la pantalla.');
+}
+
+// ── Atlas: asistente de voz ──
+const ATLAS_KEY = 'rangokit.atlas';
+const Recognition = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis' in window;
+
+function loadAtlas() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ATLAS_KEY) ?? '{}');
+    return { activo: Boolean(saved.activo), voz: saved.voz !== false, avisos: saved.avisos !== false };
+  } catch {
+    return { activo: false, voz: true, avisos: true };
+  }
+}
+
+function saveAtlas() {
+  const { activo, voz, avisos } = ed.atlas;
+  try { localStorage.setItem(ATLAS_KEY, JSON.stringify({ activo, voz, avisos })); } catch { /* sin almacenamiento: dura hasta cerrar */ }
+}
+
+/** Atlas escribe en su panel y, si la voz está activa, lo dice. speech permite decir una versión más corta. */
+function atlasSay(text, { speech = text, from = 'atlas' } = {}) {
+  const a = ed.atlas;
+  a.log = [...a.log, { from, text }].slice(-30);
+  renderAtlasLog();
+  if (from !== 'atlas' || !a.activo || !a.voz || !canSpeak() || !speech) return;
+  const synth = window.speechSynthesis;
+  // Termina la frase en curso y después dice la más reciente; las intermedias se saltan.
+  if (synth.speaking || synth.pending) {
+    a.pending = speech;
+    return;
+  }
+  atlasSpeak(speech);
+}
+
+function atlasSpeak(speech) {
+  const a = ed.atlas;
+  const synth = window.speechSynthesis;
+  const utterance = new SpeechSynthesisUtterance(speakable(speech));
+  utterance.lang = ATLAS.lang;
+  const voice = chooseVoice(synth.getVoices());
+  if (voice) utterance.voice = voice;
+  utterance.rate = 1.03;
+  utterance.onend = () => {
+    const next = a.pending;
+    a.pending = null;
+    if (next && a.activo && a.voz) atlasSpeak(next);
+  };
+  synth.speak(utterance);
+}
+
+function atlasQuiet() {
+  ed.atlas.pending = null;
+  if (canSpeak()) window.speechSynthesis.cancel();
+}
+
+function renderAtlasLog() {
+  const log = $('atlas-log');
+  if (!log) return;
+  log.innerHTML = ed.atlas.log.map((m) => `<li class="msg ${m.from === 'atlas' ? 'rango' : 'user'}"><span class="who">${m.from === 'atlas' ? 'Atlas' : 'Tú'}</span><div class="bubble">${paragraphs(m.text)}</div></li>`).join('');
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderAtlas() {
+  const panel = $('atlas');
+  const button = document.querySelector('[data-action="atlas-toggle"]');
+  if (!panel) return;
+  const a = ed.atlas;
+  panel.hidden = !a.activo;
+  button?.setAttribute('aria-pressed', String(a.activo));
+  const mic = $('atlas-mic');
+  if (mic) {
+    mic.disabled = !Recognition;
+    mic.setAttribute('aria-pressed', String(a.listening));
+    mic.textContent = a.listening ? '● Escuchando…' : '🎤 Hablar';
+  }
+  renderAtlasLog();
+}
+
+function atlasToggle(on = !ed.atlas.activo) {
+  ed.atlas.activo = on;
+  saveAtlas();
+  if (!on) {
+    atlasStopListening();
+    atlasQuiet();
+  }
+  renderAtlas();
+  if (on) {
+    ed.atlas.greeted = ed.project?.id;
+    atlasSay(greet(ed.project));
+    ed.atlas.lastStep = null;
+    atlasTutorial();
+    $('atlas-input')?.focus();
+  }
+}
+
+/** Escucha un comando con el micrófono (un solo enunciado por vez). */
+function atlasListen() {
+  const a = ed.atlas;
+  if (!Recognition) {
+    atlasSay('Tu navegador no reconoce la voz. Usa Chrome o Edge, o escríbeme el comando abajo.');
+    return;
+  }
+  if (a.listening) {
+    atlasStopListening();
+    return;
+  }
+  atlasQuiet();   // que no se escuche a sí mismo
+  const rec = new Recognition();
+  rec.lang = ATLAS.lang;
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+  rec.onresult = (event) => {
+    const result = event.results[event.results.length - 1];
+    const text = result[0].transcript;
+    const input = $('atlas-input');
+    if (input) input.value = text;
+    if (result.isFinal) {
+      if (input) input.value = '';
+      atlasHear(text);
+    }
+  };
+  rec.onerror = (event) => {
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') atlasSay('Necesito permiso para usar el micrófono. Actívalo en el candado de la barra de direcciones, o escríbeme abajo.');
+    else if (event.error === 'no-speech') atlasSay('No te escuché. Vuelve a tocar «Hablar» y dime el comando.');
+    else if (event.error === 'network') atlasSay('El reconocimiento de voz necesita internet. Mientras, escríbeme el comando.');
+  };
+  rec.onend = () => {
+    a.listening = false;
+    a.recognition = null;
+    renderAtlas();
+  };
+  try {
+    rec.start();
+    a.recognition = rec;
+    a.listening = true;
+  } catch {
+    a.listening = false;
+  }
+  renderAtlas();
+}
+
+function atlasStopListening() {
+  ed.atlas.recognition?.stop();
+}
+
+/** Lo que el usuario dijo o escribió: se muestra y se ejecuta. */
+function atlasHear(text) {
+  const clean = String(text ?? '').trim();
+  if (!clean || !ed.project) return;
+  atlasSay(clean, { from: 'user' });
+  atlasDo(parseCommand(clean, ed.project), clean);
+}
+
+/** Componentes a los que aplica un cambio de altura o altitud pedido por voz. */
+function atlasTargets(cmd) {
+  const withParam = ed.project.components.filter((c) => (definition(c.type).energy?.params ?? []).some((p) => p.key === cmd.key && p.live));
+  if (cmd.target) return withParam.filter((c) => c.id === cmd.target);
+  const wind = withParam.filter((c) => c.type === 'aerogenerador' || c.type === 'rotor-eolico');
+  if (cmd.key === 'altura' && (cmd.tower || wind.length)) return wind;
+  return withParam;
+}
+
+function atlasDo(cmd, said) {
+  const a = ed.atlas;
+  const n = (a.n = (a.n ?? 0) + 1);
+  const p = ed.project;
+  const tutorial = p.tutorial && tutorialOf(p.tutorial.id);
+  switch (cmd.action) {
+    case 'mute':
+      atlasQuiet();
+      a.voz = false;
+      saveAtlas();
+      renderAtlas();
+      return atlasSay('Listo, ya no hablo. Te sigo respondiendo aquí por escrito. Di «habla» para que vuelva a hablar.');
+    case 'unmute':
+      a.voz = true;
+      saveAtlas();
+      renderAtlas();
+      return atlasSay('De acuerdo, vuelvo a hablar.');
+    case 'help':
+      return atlasSay(`Puedes decirme:\n${HELP.map((h) => `• ${h}`).join('\n')}`, { speech: 'Te dejé en pantalla lo que puedes decirme. Por ejemplo: agrega un panel solar, ejecuta, sube el viento a 8, o qué sigue.' });
+    case 'add': {
+      if (ed.sim) stopSim('Detuve la simulación para agregar el componente.');
+      const component = addAt(cmd.type, ...viewCenter(cmd.type));
+      return atlasSay(`Agregué ${component.label}, ${nameOf(cmd.type)}.${tutorial ? '' : ' Ahora conéctalo tocando sus puertos.'}`);
+    }
+    case 'add-unknown':
+      return atlasSay(`No encontré «${cmd.text}» en el catálogo. Prueba con otro nombre, por ejemplo «panel solar», «batería», «cilindro» o «Arduino».`);
+    case 'tutorial-do': {
+      if (!tutorial) return atlasSay('No hay un tutorial abierto. Los encuentras en Mis proyectos, en la sección de tutoriales.');
+      const button = document.querySelector('#ed-tutorial [data-action="tutorial-do"]');
+      if (!button) return atlasSay('Este paso lo tienes que hacer tú: es la prueba de que funciona. Di «qué sigue» y te lo repito.');
+      button.click();
+      return undefined;   // el siguiente paso lo anuncia atlasTutorial
+    }
+    case 'repeat': {
+      if (tutorial) {
+        a.lastStep = null;
+        return atlasTutorial(true);
+      }
+      const next = analyzeProject(p).next[0];
+      return atlasSay(next ? `Lo que sigue: ${next}` : 'Tu proyecto se ve completo. Di «ejecuta» para probarlo o «revisa» para revisarlo conmigo.');
+    }
+    case 'run':
+      if (ed.sim) return atlasSay('Ya está en marcha. Di «cómo va» y te cuento qué está pasando.');
+      startSim();
+      return undefined;   // startSim avisa
+    case 'stop':
+      if (!ed.sim) return atlasSay('No está en marcha. Di «ejecuta» para empezar.');
+      stopSim();
+      return atlasSay('Listo, detuve la simulación.');
+    case 'restart':
+      stopSim('');
+      startSim();
+      return undefined;
+    case 'view':
+      setView(cmd.mode);
+      return atlasSay(cmd.mode === '3d' ? 'Vista 3D. Arrastra para girar la mesa.' : 'Vista 2D, el esquema.');
+    case 'fit':
+      if (ed.mode3d) ed.v3d?.frame();
+      else zoomToFit();
+      return atlasSay('Listo, ajusté la vista.');
+    case 'param': {
+      const targets = atlasTargets(cmd);
+      if (!targets.length) return atlasSay(cmd.key === 'altitud' ? 'No hay paneles solares para cambiarles la altitud.' : 'No hay torres ni paneles a los que cambiarles la altura.');
+      const done = targets.map((c) => {
+        const def = definition(c.type).energy.params.find((x) => x.key === cmd.key);
+        const value = cmd.value ?? param(c, cmd.key) + cmd.delta;
+        c.config[cmd.key] = Math.max(def.min, Math.min(def.max, value));
+        return c;
+      });
+      touch();
+      if (ed.tab === 'ejecucion' || ed.selected) renderInspector();
+      const what = cmd.key === 'altitud' ? 'altitud de' : 'altura de';
+      const list = done.map((c) => `${c.label} a ${c.config[cmd.key]} ${cmd.key === 'altitud' ? 'msnm' : 'm'}`).join(', ');
+      const wind = ed.sim?.energy?.has ? done.filter((c) => c.type === 'aerogenerador' || c.type === 'rotor-eolico') : [];
+      const extra = wind.length ? ` A esa altura el viento sopla a ${windAtHeight(ed.sim.env.viento, param(wind[0], 'altura'), param(wind[0], 'terreno')).toFixed(1)} m/s.` : '';
+      return atlasSay(`Listo: ${what} ${list}.${extra}`);
+    }
+    case 'env': {
+      if (!ed.sim?.energy?.has) return atlasSay('El ambiente cambia con la simulación en marcha y con componentes de energía, como un panel o un aerogenerador. Di «ejecuta» primero.');
+      const control = ENV_CONTROLS.find((c) => c.key === cmd.key);
+      setEnv(ed.sim, cmd.key, cmd.value ?? ed.sim.env[cmd.key] + cmd.delta);
+      updateRunPanel();
+      if (updateTutorial()) renderTutorial();
+      return atlasSay(`${control.label.replace(/\s*\(.*\)/, '')} a ${ed.sim.env[cmd.key]} ${control.unit}.`);
+    }
+    case 'press': {
+      const component = p.components.find((c) => c.id === cmd.id);
+      if (!ed.sim) return atlasSay(`Primero pon en marcha la simulación: di «ejecuta» y luego «presiona ${component.label}».`);
+      const mode = interaction(component);
+      if (mode === 'hold') {
+        releaseHold();
+        ed.holding = component.id;
+        press(ed.sim, component.id, true);
+        setTimeout(() => { if (ed.holding === component.id) releaseHold(); }, 2500);
+        return atlasSay(`Mantengo presionado ${component.label} un par de segundos.`);
+      }
+      if (mode === 'toggle') {
+        toggle(ed.sim, component.id);
+        return atlasSay(`Accioné ${component.label}.`);
+      }
+      return atlasSay(`${component.label} no se acciona a mano.`);
+    }
+    case 'press-unknown':
+      return atlasSay('¿Cuál componente? Dime su etiqueta, por ejemplo «presiona S1».');
+    case 'release':
+      releaseHold();
+      return atlasSay('Solté el botón.');
+    case 'review': {
+      ed.tab = 'revision';
+      renderInspector();
+      return atlasSay(reviewSpeech(review(), p, n));
+    }
+    case 'status':
+      return atlasSay(statusSpeech({ project: p, sim: ed.sim }));
+    case 'rango': {
+      openChat();
+      chatSend({ text: cmd.text });
+      const reply = [...chatState().messages].reverse().find((m) => m.from === 'rango');
+      return atlasSay(`Le pasé tu idea a Rango, que sabe proponer cómo armarla. ${reply ? `Dice: ${reply.text}` : ''}`);
+    }
+    default:
+      return atlasSay(`No te entendí${said ? `: «${said}»` : ''}. Di «ayuda» y te muestro lo que puedo hacer.`);
+  }
+}
+
+/** Anuncia el paso del tutorial cuando cambia (o cuando se pide repetirlo). */
+function atlasTutorial(force = false) {
+  const a = ed.atlas;
+  const state = ed.project?.tutorial;
+  const tutorial = state && tutorialOf(state.id);
+  if (!a.activo || !tutorial) return;
+  const last = a.lastStep;
+  const same = last && last.project === ed.project.id && last.id === state.id;
+  if (!force && same && last.step === state.step) return;
+  const advanced = Boolean(same && last.step < state.step);
+  a.lastStep = { project: ed.project.id, id: state.id, step: state.step };
+  if (state.step >= tutorial.steps.length) {
+    atlasSay(FINISHED);
+    return;
+  }
+  const step = tutorial.steps[state.step];
+  const text = stepText(tutorial, step, ed.project);
+  const hint = voiceHint(step);
+  if (hint) text.body += ` O dímelo: «${hint}».`;
+  atlasSay(stepSpeech(text, state.step, tutorial.steps.length, a.n++, advanced));
+}
+
+/** Durante la simulación: avisos nuevos y consejos, como mucho uno cada pocos segundos. */
+function atlasWatch() {
+  const a = ed.atlas;
+  if (!a.activo || !ed.sim) return;
+  const now = ed.sim.t;
+  if (now - (a.lastWatch ?? -1) < 1) return;
+  a.lastWatch = now;
+  // Avisos de la simulación (un LED quemado, una bobina sin tensión...).
+  const events = ed.sim.events;
+  const fresh = events.filter((e) => e.kind === 'Aviso' && !a.heard.has(e.text));
+  for (const e of fresh) a.heard.add(e.text);
+  if (fresh.length) {
+    atlasSay(`${calm(a.n++)} ${fresh[0].text}`);
+    a.lastTip = now;
+    return;
+  }
+  if (!a.avisos || now - (a.lastTip ?? -99) < 12 || (canSpeak() && window.speechSynthesis.speaking)) return;
+  const tip = pickTip(advise({ project: ed.project, sim: ed.sim, findings: [] }), a.memory, performance.now() / 1000);
+  if (tip) {
+    atlasSay(tip.text);
+    a.lastTip = now;
+  }
+}
+
+/** Después de editar: si apareció un error nuevo, Atlas lo comenta (salvo en tutoriales, que ya guían). */
+function atlasAfterEdit() {
+  const a = ed.atlas;
+  clearTimeout(a.editTimer);
+  if (!a.activo || !a.avisos || ed.sim || ed.project?.tutorial) return;
+  a.editTimer = setTimeout(() => {
+    if (!ed.project || ed.sim) return;
+    const tip = pickTip(advise({ project: ed.project, sim: null, findings: review() }), a.memory, performance.now() / 1000, 600);
+    if (tip) atlasSay(tip.text);
+  }, 2500);
 }
 
 // ── Vista 3D ──
@@ -9093,6 +9866,14 @@ function bindEditor() {
       refresh();
       return;
     }
+    if (action === 'atlas-toggle') {
+      atlasToggle();
+      return;
+    }
+    if (action === 'atlas-mic') {
+      atlasListen();
+      return;
+    }
     if (action === 'view-frame') {
       ed.v3d?.frame();
       return;
@@ -9293,6 +10074,13 @@ function bindEditor() {
 
   root.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (event.target.id === 'atlas-form') {
+      const input = $('atlas-input');
+      const text = input.value;
+      input.value = '';
+      atlasHear(text);
+      return;
+    }
     if (event.target.id === 'chat-form') {
       const input = $('chat-input');
       const text = input.value.trim();
@@ -9312,6 +10100,12 @@ function bindEditor() {
 
   root.addEventListener('change', (event) => {
     const target = event.target;
+    if (target.dataset.atlas) {
+      ed.atlas[target.dataset.atlas] = target.checked;
+      saveAtlas();
+      if (target.dataset.atlas === 'voz' && !target.checked) atlasQuiet();
+      return;
+    }
     if (ed.sim && !['ed-problem', 'ed-web-terms', 'ed-file', 'ed-search', 'ed-category'].includes(target.id) && !target.dataset.pot && !target.dataset.env && !target.dataset.live) {
       stopSim('Detuve la simulación para que puedas editar.');
     }
@@ -9585,6 +10379,13 @@ function bindEditor() {
 
   document.addEventListener('keydown', (event) => {
     if (ed.view !== 'edit' || $('view-editor').hidden) return;
+    // Alt+A: hablarle a Atlas (lo enciende si estaba apagado).
+    if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === 'a' || event.key === 'A') && !event.repeat) {
+      event.preventDefault();
+      if (!ed.atlas.activo) atlasToggle(true);
+      atlasListen();
+      return;
+    }
     if (event.target.closest?.('dialog')) return;
     const menu = $('ed-menu');
     if (menu && !menu.hidden) {
@@ -9748,6 +10549,9 @@ function start() {
   ed.projects = loadAll();
   ed.learned = loadList(LEARN_KEY);
   ed.useful = loadList(USEFUL_KEY).filter((url) => typeof url === 'string' && url.startsWith('https://github.com/'));
+  Object.assign(ed.atlas, loadAtlas());
+  // Las voces del sistema se cargan después; pedirlas aquí hace que estén listas al hablar.
+  if (canSpeak()) window.speechSynthesis.getVoices();
   $('nav-practice').addEventListener('click', () => showSection('practice'));
   $('nav-projects').addEventListener('click', () => showSection('projects'));
   bindEditor();

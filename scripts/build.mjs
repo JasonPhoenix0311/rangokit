@@ -26,6 +26,7 @@ const MODULES = [
   'src/editor/sim.js',
   'src/editor/dialog.js',
   'src/editor/tutorial.js',
+  'src/editor/atlas.js',
   'src/editor/escena3d.js',
   'src/editor/vista3d.js',
   'src/editor/ui.js',
