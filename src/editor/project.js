@@ -31,6 +31,8 @@ export function addComponent(project, type, x = 40, y = 40) {
   if (def.board) component.config = { pins: {}, rules: [] };
   if (def.value) component.config[def.value.key] = def.value.default;
   if (def.colorable) component.config.color = 'rojo';
+  if (def.servo) component.config.angles = { ...def.servo };
+  if (def.lcd) component.config.lines = [...def.lcd.lines];
   project.components.push(component);
   return component;
 }
@@ -56,7 +58,8 @@ export function connect(project, a, b) {
   if (!pa || !pb) return { ok: false, error: 'Uno de los puertos ya no existe.' };
   if (keyOf(a) === keyOf(b)) return { ok: false, error: 'No puedes conectar un puerto consigo mismo.' };
   if (pa.port.kind !== pb.port.kind) {
-    return { ok: false, error: 'Un cable no se conecta a una manguera. Une puertos eléctricos entre sí o neumáticos entre sí.' };
+    const name = { elec: 'un cable de control', air: 'una manguera', pot: 'un cable de potencia', eje: 'un eje', agua: 'una tubería de agua' };
+    return { ok: false, error: `No se puede unir ${name[pa.port.kind]} con ${name[pb.port.kind]}. Cada puerto solo se conecta con otro de su mismo tipo.` };
   }
   const exists = project.links.some((l) =>
     (keyOf(l.a) === keyOf(a) && keyOf(l.b) === keyOf(b)) || (keyOf(l.a) === keyOf(b) && keyOf(l.b) === keyOf(a)));
@@ -73,11 +76,30 @@ export function removeLink(project, id) {
 }
 
 /**
+ * Uniones internas de los componentes (`bus` en el catálogo): columnas y rieles de la protoboard,
+ * patas gemelas del botón táctil. Se comportan como cables que no se pueden quitar.
+ */
+export function internalEdges(project, kind = 'elec') {
+  const edges = [];
+  for (const component of project.components) {
+    const def = definition(component.type);
+    for (const [i, group] of (def.bus ?? []).entries()) {
+      if (portOf(component.type, group[0])?.kind !== kind) continue;
+      for (let j = 1; j < group.length; j += 1) {
+        edges.push({ id: `${component.id}:bus${i}-${j}`, a: keyOf({ c: component.id, p: group[0] }), b: keyOf({ c: component.id, p: group[j] }) });
+      }
+    }
+  }
+  return edges;
+}
+
+/**
  * Redes eléctricas o neumáticas: grupos de puertos unidos por cables o mangueras.
  * Usa el mismo recorrido del motor que la práctica guiada.
  */
 export function nets(project, kind = 'elec') {
-  const edges = project.links.filter((l) => l.kind === kind).map((l) => ({ id: l.id, a: keyOf(l.a), b: keyOf(l.b) }));
+  const edges = [...project.links.filter((l) => l.kind === kind).map((l) => ({ id: l.id, a: keyOf(l.a), b: keyOf(l.b) })),
+    ...internalEdges(project, kind)];
   const nodes = [];
   for (const component of project.components) {
     for (const port of definition(component.type).ports) {
@@ -149,6 +171,8 @@ export function reviewWiring(project) {
   }
 
   findings.push(...reviewLeds(project));
+  findings.push(...reviewTransistors(project));
+  findings.push(...reviewPower(project));
 
   const airNets = nets(project, 'air');
   for (const component of project.components) {
@@ -179,50 +203,131 @@ function reviewLeds(project) {
   const findings = [];
   const groups = nets(project, 'elec');
   for (const led of project.components) {
-    const anode = definition(led.type).ports.find((port) => port.bareLed);
-    if (!anode) continue;
+    // Un LED común tiene un ánodo; un LED RGB tiene tres y un display de 7 segmentos, ocho.
+    const anodes = definition(led.type).ports.filter((port) => port.bareLed);
+    if (!anodes.length) continue;
     const color = ledColor(led.config.color);
-    const vf = color.vf;
-    const tag = `${led.label} (${color.label.toLowerCase()}, ${vf} V)`;
-    const list = members(project, netOf(groups, { c: led.id, p: anode.id })).filter(({ component }) => component.id !== led.id);
-    const direct = netVolts(list);
-    if (direct) {
-      const calc = ledResistor(direct, { vf });
-      findings.push({
-        level: 'error',
-        code: 'led-sin-resistencia',
-        text: `${tag} recibe ${direct} V sin resistencia. La corriente solo la limita el ${direct === 5 ? 'pin' : 'circuito'} y el LED se quema.`,
-        where: [led.id],
-        suggest: [{ type: 'resistencia', ohms: calc.value,
-          text: `Pon una resistencia de ${formatOhms(calc.value)} (${calc.rating}) entre la fuente y el ánodo: (${direct} V − ${vf} V) ÷ 15 mA = ${Math.round(calc.exact)} Ω, y el valor comercial siguiente es ${formatOhms(calc.value)}.` }],
-      });
-      continue;
+    const bare = [];
+    for (const anode of anodes) {
+      const vf = anode.vf ?? color.vf;
+      const name = anode.color ?? color.label.toLowerCase();
+      const tag = anodes.length > 1 ? `${led.label}:${anode.label} (${name}, ${vf} V)` : `${led.label} (${name}, ${vf} V)`;
+      const list = members(project, netOf(groups, { c: led.id, p: anode.id })).filter(({ component }) => component.id !== led.id);
+      const direct = netVolts(list);
+      if (direct) {
+        bare.push({ anode, vf, tag, direct });
+        continue;
+      }
+      for (const { component, port } of list.filter((item) => item.port.passive === 'r')) {
+        const far = members(project, netOf(groups, { c: component.id, p: port.pair }));
+        const volts = netVolts(far);
+        if (!volts) continue;
+        const ohms = Number(component.config.ohms);
+        const current = ledCurrent(volts, ohms, vf);
+        const limit = far.some((item) => item.port.pin) ? PIN_MAX_MA : 20;
+        const calc = ledResistor(volts, { vf });
+        const who = anodes.length > 1 ? `${led.label}:${anode.label}` : led.label;
+        if (current > limit) {
+          findings.push({
+            level: 'error',
+            code: 'resistencia-baja',
+            text: `Con ${component.label} de ${formatOhms(ohms)}, por ${who} pasan ${Math.round(current)} mA. El máximo seguro es ${limit} mA.`,
+            where: [led.id, component.id],
+            suggest: [{ type: 'resistencia', ohms: calc.value, text: `Cambia ${component.label} por ${formatOhms(calc.value)} (${calc.rating}): deja unos ${Math.round(calc.current)} mA.` }],
+          });
+        } else if (current < 2) {
+          findings.push({
+            level: 'aviso',
+            code: 'led-tenue',
+            text: `Con ${component.label} de ${formatOhms(ohms)}, por ${who} pasan ${current.toFixed(1)} mA. Apenas se va a notar encendido.`,
+            where: [led.id, component.id],
+            suggest: [{ type: 'resistencia', ohms: calc.value, text: `Para un brillo normal usa ${formatOhms(calc.value)}.` }],
+          });
+        }
+      }
     }
-    for (const { component, port } of list.filter((item) => item.port.passive === 'r')) {
-      const far = members(project, netOf(groups, { c: component.id, p: port.pair }));
-      const volts = netVolts(far);
-      if (!volts) continue;
-      const ohms = Number(component.config.ohms);
-      const current = ledCurrent(volts, ohms, vf);
-      const limit = far.some((item) => item.port.pin) ? PIN_MAX_MA : 20;
-      const calc = ledResistor(volts, { vf });
-      if (current > limit) {
+    if (!bare.length) continue;
+    const [first] = bare;
+    const calc = ledResistor(first.direct, { vf: first.vf });
+    const how = `Pon una resistencia de ${formatOhms(calc.value)} (${calc.rating}) entre la fuente y el ánodo: (${first.direct} V − ${first.vf} V) ÷ 15 mA = ${Math.round(calc.exact)} Ω, y el valor comercial siguiente es ${formatOhms(calc.value)}.`;
+    findings.push({
+      level: 'error',
+      code: 'led-sin-resistencia',
+      text: bare.length === 1
+        ? `${first.tag} recibe ${first.direct} V sin resistencia. La corriente solo la limita el ${first.direct === 5 ? 'pin' : 'circuito'} y el LED se quema.`
+        : `${led.label}: ${bare.map((b) => b.anode.label).join(', ')} reciben tensión sin resistencia. Cada uno es un LED y necesita su propia resistencia, o se quema.`,
+      where: [led.id],
+      suggest: [{ type: 'resistencia', ohms: calc.value, text: bare.length === 1 ? how : `${how} Pon una en cada ${led.type === 'display-7seg' ? 'segmento' : 'color'}.` }],
+    });
+  }
+  return findings;
+}
+
+/**
+ * Reglas de transistores y motores:
+ * - La base de un transistor no se conecta directo a un pin o a una fuente: sin resistencia
+ *   pasa demasiada corriente y se dañan el pin y el transistor.
+ * - Un motor no se conecta directo a un pin: pide mucho más que los 20 mA que da.
+ */
+function reviewTransistors(project) {
+  const findings = [];
+  const groups = nets(project, 'elec');
+  const others = (component, portId) => members(project, netOf(groups, { c: component.id, p: portId }))
+    .filter((item) => item.component.id !== component.id);
+  for (const component of project.components) {
+    const def = definition(component.type);
+    const base = def.ports.find((port) => port.base);
+    if (base) {
+      const volts = netVolts(others(component, base.id));
+      if (volts) {
         findings.push({
           level: 'error',
-          code: 'resistencia-baja',
-          text: `Con ${component.label} de ${formatOhms(ohms)}, por ${led.label} pasan ${Math.round(current)} mA. El máximo seguro es ${limit} mA.`,
-          where: [led.id, component.id],
-          suggest: [{ type: 'resistencia', ohms: calc.value, text: `Cambia ${component.label} por ${formatOhms(calc.value)} (${calc.rating}): deja unos ${Math.round(calc.current)} mA.` }],
-        });
-      } else if (current < 2) {
-        findings.push({
-          level: 'aviso',
-          code: 'led-tenue',
-          text: `Con ${component.label} de ${formatOhms(ohms)}, por ${led.label} pasan ${current.toFixed(1)} mA. Apenas se va a notar encendido.`,
-          where: [led.id, component.id],
-          suggest: [{ type: 'resistencia', ohms: calc.value, text: `Para un brillo normal usa ${formatOhms(calc.value)}.` }],
+          code: 'base-sin-resistencia',
+          text: `La base de ${component.label} recibe ${volts} V directo, sin resistencia. Pasa demasiada corriente: se dañan el transistor y el pin que la alimenta.`,
+          where: [component.id],
+          suggest: [{ type: 'resistencia', ohms: 1000, text: 'Pon una resistencia de 1 kΩ entre el pin y la base: deja unos 4 mA, suficientes para que el transistor conduzca.' }],
         });
       }
+    }
+    const motorPorts = def.ports.filter((port) => port.motor);
+    const pins = motorPorts.flatMap((port) => others(component, port.id).filter((item) => item.port.pin));
+    if (pins.length) {
+      findings.push({
+        level: 'error',
+        code: 'motor-en-pin',
+        text: `${component.label} está conectado directo a ${names(pins)}. Un motor pide cientos de mA y un pin da máximo 20 mA: se daña el Arduino.`,
+        where: [component.id, ...new Set(pins.map((item) => item.component.id))],
+        suggest: [{ type: 'transistor-npn', text: 'Mueve el motor con un transistor NPN: el pin va a la base con una resistencia de 1 kΩ, el motor va de +5 V al colector y el emisor a GND.' }],
+      });
+    }
+  }
+  return findings;
+}
+
+/**
+ * Módulos que necesitan VCC y GND (servo, pantalla, ultrasónico): si ya tienen algún cable pero les
+ * falta la alimentación, no funcionan aunque su señal esté bien conectada.
+ */
+function reviewPower(project) {
+  const findings = [];
+  const groups = nets(project, 'elec');
+  const reaches = (component, portId, test) => members(project, netOf(groups, { c: component.id, p: portId }))
+    .some((item) => item.component.id !== component.id && test(item.port));
+  for (const component of project.components) {
+    const def = definition(component.type);
+    if (!def.needsPower) continue;
+    if (!def.ports.some((port) => netOf(groups, { c: component.id, p: port.id }).size > 1)) continue;
+    const missing = [
+      !reaches(component, 'VCC', (port) => port.role === 'supply+' && port.domain === '5v') && 'VCC a 5 V',
+      !reaches(component, 'GND', (port) => port.role === 'gnd') && 'GND',
+    ].filter(Boolean);
+    if (missing.length) {
+      findings.push({
+        level: 'aviso',
+        code: 'sin-alimentacion',
+        text: `${component.label} no tiene conectado ${missing.join(' ni ')}. Sin alimentación no funciona, aunque su señal esté bien conectada.`,
+        where: [component.id],
+      });
     }
   }
   return findings;
@@ -237,6 +342,7 @@ export function parseProject(data) {
   project.problem = String(data.problem ?? '');
   // La conversación con Rango se revisa al abrirla; aquí solo se copia si tiene forma de objeto.
   project.chat = data.chat && typeof data.chat === 'object' ? JSON.parse(JSON.stringify(data.chat)) : null;
+  if (data.tutorial && typeof data.tutorial.id === 'string') project.tutorial = { id: data.tutorial.id, step: Math.max(0, Math.round(Number(data.tutorial.step) || 0)) };
   project.created = String(data.created ?? project.created);
   project.updated = String(data.updated ?? project.updated);
   for (const item of data.components) {

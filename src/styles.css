@@ -9,6 +9,8 @@
   --electric: #d9400b;
   --volt: #b98300;
   --air: #0b78a3;
+  --power: #c2185b;
+  --water: #12857a;
   --fault: #bf0f7a;
   --ok: #18774a;
   --push: #1c8a50;
@@ -28,6 +30,8 @@
     --electric: #ff7c45;
     --volt: #e5b23c;
     --air: #4cc2e8;
+    --power: #ff6f9f;
+    --water: #43d1bf;
     --fault: #ff62ba;
     --ok: #5ccf96;
     --push: #2bab68;
@@ -45,6 +49,8 @@
   --electric: #ff7c45;
   --volt: #e5b23c;
   --air: #4cc2e8;
+  --power: #ff6f9f;
+  --water: #43d1bf;
   --fault: #ff62ba;
   --ok: #5ccf96;
   --push: #2bab68;
@@ -274,4 +280,37 @@ footer a { color: inherit; text-decoration: underline; text-underline-offset: 2p
 @media (prefers-reduced-motion: reduce) {
   .net.flow .pulse, .net.vent .pulse { animation: none; stroke-dasharray: none; }
   .valve { transition: none; }
+}
+
+/* Cuenta de docente */
+button.home-link { cursor: pointer; }
+.account-dialog {
+  width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0;
+  color: var(--ink); background: var(--sheet); border: 1px solid var(--line); border-radius: 6px;
+}
+.account-dialog::backdrop { background: rgb(0 0 0 / .55); }
+.acc-body { position: relative; display: grid; gap: 12px; padding: 20px; }
+.acc-body h2 { font-family: var(--display); font-weight: 600; font-size: 24px; line-height: 1.1; padding-right: 32px; }
+.acc-close { position: absolute; top: 10px; right: 10px; min-height: 34px; width: 34px; padding: 0; font-size: 20px; }
+#acc-form { display: grid; gap: 10px; }
+.acc-field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.acc-field input {
+  font: 15px var(--body); color: var(--ink); background: var(--paper);
+  border: 1px solid var(--line); border-radius: 4px; padding: 9px 10px; min-height: 40px;
+}
+.acc-field input:focus-visible { border-color: var(--ink); }
+.acc-check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.acc-check input { margin-top: 3px; }
+.acc-body a { color: inherit; text-underline-offset: 2px; }
+.acc-actions { display: flex; gap: 8px; }
+.acc-links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; }
+.acc-link { background: none; border: 0; padding: 0; min-height: 0; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.acc-note { font-size: 13px; color: var(--muted); border-top: 1px solid var(--grid); padding-top: 10px; }
+.acc-status:empty { display: none; }
+.acc-status { font-size: 14px; }
+.acc-status.bad { color: var(--fault); }
+.acc-status.ok { color: var(--ok); }
+.account-dialog .soon {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-family: var(--mono); font-size: 10px;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--volt); border: 1px solid var(--volt);
 }

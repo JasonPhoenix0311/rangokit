@@ -1,13 +1,17 @@
 // Interfaz del editor de proyectos: lista de proyectos, catálogo, plano, propiedades y panel de Arduino.
-import { SYSTEMS, CATEGORIES, LED_COLORS, definition, filterCatalog, placePort, rotatedSize, glyphTransform, ledColor } from './catalog.js';
+import { SYSTEMS, CATEGORIES, LED_COLORS, definition, filterCatalog, placePort, rotatedSize, glyphTransform, ledColor, segmentGlyph, servoGlyph, lcdGlyph, servoAngles, lcdLines } from './catalog.js';
 import { createProject, addComponent, removeComponent, connect, removeLink, reviewWiring, parseProject, keyOf } from './project.js';
-import { boards, pinRows, reviewArduino, generateSketch, PIN_MODES, CONDITIONS, ACTIONS } from './arduino.js';
+import { boards, pinRows, reviewArduino, generateSketch, PIN_MODES, CONDITIONS, ACTIONS, RANGES, isInput, isOutput, isMeasured, lcdClean } from './arduino.js';
 import { COMMON_OHMS, formatOhms } from './calc.js';
 import { TEMPLATES, buildTemplate, matchProblem, analyzeProject, templateSteps, missingFor, learningSummary } from './rango.js';
 import { SEARCH, searchProjects, rankRepos } from './web.js';
 import { createSim, advance, press, toggle, setValue, view, interaction, SIM } from './sim.js';
-import { cylinderGlyph } from './catalog.js';
+import { cylinderGlyph, param } from './catalog.js';
+import { tankGlyph } from './catalog-energia.js';
+import { reviewEnergy, energyText, setEnv, ENV_CONTROLS, ESCALAS, ENERGY, ENERGY_SIMPLIFICATIONS, fmtW, fmtWh } from './energia.js';
 import { startConversation, respond, say, normalizeConversation, userText } from './dialog.js';
+import { createView3d } from './vista3d.js';
+import { TUTORIALS, tutorialOf, stepText, advanceTutorial, applyStep, canApply, stepTarget } from './tutorial.js';
 
 const LEARN_KEY = 'rangokit.aprendizaje';
 const USEFUL_KEY = 'rangokit.utiles';
@@ -130,7 +134,9 @@ const esc = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const snap = (value) => Math.round(value / GRID) * GRID;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const systemLabel = (id) => (id === 'todos' ? 'Mixto' : SYSTEMS.find((s) => s.id === id)?.label ?? 'Mixto');
-const isInputMode = (mode) => mode === 'input' || mode === 'input_pullup' || mode === 'analog';
+const isInputMode = isInput;
+const LINK_NAMES = { elec: 'Cable', air: 'Manguera', pot: 'Cable de potencia', eje: 'Eje', agua: 'Tubería de agua' };
+const linkName = (kind) => LINK_NAMES[kind] ?? 'Conexión';
 
 const ed = {
   view: 'list',
@@ -155,6 +161,9 @@ const ed = {
   simLast: 0,
   simSignature: '',
   holding: null,
+  mode3d: false,
+  v3d: null,
+  v3dLoading: false,
 };
 
 // Almacenamiento local. Si el navegador lo bloquea, el editor sigue funcionando y se avisa.
@@ -225,6 +234,17 @@ function renderList() {
           <input type="file" id="ed-file" accept=".json,application/json" hidden>
         </div>
       </div>
+      <section class="tutorials" aria-labelledby="tut-title">
+        <h3 id="tut-title">Tutoriales: arma y prueba un proyecto paso a paso</h3>
+        <p class="tip">Uno por cada tipo de sistema. Te dice qué seleccionar, revisa cada paso solo y al final compruebas que funcione en la simulación y en 3D.</p>
+        <ul class="tutorial-list">${TUTORIALS.map((t) => `
+          <li>
+            <span class="tip">${esc(systemLabel(t.system))} · ${t.steps.length} pasos</span>
+            <b>${esc(shortTitle(t))}</b>
+            <span>${esc(t.goal)}</span>
+            <button type="button" class="primary" data-action="tutorial-start" data-id="${t.id}">Empezar</button>
+          </li>`).join('')}</ul>
+      </section>
       <form class="new-project" id="ed-form" hidden>
         <label>Nombre<input id="ed-new-name" required maxlength="80" placeholder="Ej. Estampadora con enclavamiento"></label>
         <label>Tipo de sistema<select id="ed-new-system">${systemOptions}</select></label>
@@ -249,7 +269,7 @@ function renderList() {
       <p class="tip">${ed.storageOk
         ? 'Los proyectos se guardan solo en este navegador. Exporta el archivo para respaldarlos o compartirlos.'
         : 'Este navegador no permite guardar. Exporta el archivo antes de cerrar la página o perderás el proyecto.'}</p>
-      <p class="tip">Beta: el editor revisa el cableado con reglas fijas, pero todavía no simula los proyectos libres.</p>
+      <p class="tip">Beta: el editor revisa el cableado con reglas fijas y simula los proyectos con simplificaciones declaradas. Que funcione aquí no garantiza que funcione el circuito real.</p>
     </section>`;
 }
 
@@ -288,6 +308,7 @@ const slug = (text) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase
 // Editor.
 function renderEditor() {
   const p = ed.project;
+  closeView3d();
   $('view-editor').innerHTML = `
     <div class="editor">
       <div class="ed-toolbar">
@@ -299,7 +320,11 @@ function renderEditor() {
           <button type="button" class="primary run-button" id="ed-run" data-action="run">▶ Ejecutar</button>
           <button type="button" id="ed-restart" data-action="restart" hidden>↺ Reiniciar</button>
         </div>
-        <div class="runs" role="group" aria-label="Zoom">
+        <div class="runs" role="group" aria-label="Vista">
+          <button type="button" data-action="view" data-view="2d" id="ed-v2d" aria-pressed="true">2D</button>
+          <button type="button" data-action="view" data-view="3d" id="ed-v3d" aria-pressed="false">3D</button>
+        </div>
+        <div class="runs" role="group" aria-label="Zoom" id="ed-zoom">
           <button type="button" data-action="zoom" data-step="-1" aria-label="Alejar">−</button>
           <button type="button" data-action="zoom-fit">Ajustar</button>
           <button type="button" data-action="zoom" data-step="1" aria-label="Acercar">+</button>
@@ -322,12 +347,17 @@ function renderEditor() {
         <div class="palette-items" id="ed-items"></div>
         <p class="tip">Toca un componente para agregarlo o arrástralo al plano.</p>
       </aside>
+      <div class="view3d" id="ed-3d" hidden>
+        <p class="view3d-hint">Arrastra para girar · rueda para acercar · clic derecho o Mayús para desplazar. Durante la ejecución, haz clic en pulsadores y palancas.</p>
+        <button type="button" class="view3d-frame" data-action="view-frame">Centrar</button>
+      </div>
       <div class="canvas-wrap" id="ed-wrap">
         <svg class="ed-canvas" id="ed-canvas" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" width="${CANVAS_W}" height="${CANVAS_H}" role="group" aria-label="Plano del proyecto">
           <g id="ed-layer"></g>
         </svg>
       </div>
       <aside class="inspector" aria-label="Propiedades">
+        <section class="tutorial-card" id="ed-tutorial" aria-live="polite" hidden></section>
         <div class="chips" role="tablist">
           <button type="button" role="tab" data-action="tab" data-tab="componente" id="tab-componente">Selección</button>
           <button type="button" role="tab" data-action="tab" data-tab="revision" id="tab-revision">Revisión</button>
@@ -363,6 +393,7 @@ function renderEditor() {
   renderCanvas();
   renderInspector();
   renderArduino();
+  renderTutorial();
   if (!ed.storageOk) setStatus('Este navegador no permite guardar. Exporta el archivo para no perder el proyecto.', 'warn');
 }
 
@@ -379,10 +410,11 @@ function renderPalette() {
         <span>${esc(def.name)}</span>
       </button></li>`).join('')}</ul>`).join('')
     : '<p class="tip">Ningún componente coincide con el filtro.</p>';
+  highlightTutorial();
 }
 
 function review() {
-  return [...reviewWiring(ed.project), ...reviewArduino(ed.project)];
+  return [...reviewWiring(ed.project), ...reviewArduino(ed.project), ...reviewEnergy(ed.project)];
 }
 
 /** Ancho y alto de un componente en el plano, ya girado. */
@@ -396,7 +428,8 @@ function endPosition(end) {
   return { x: component.x + x, y: component.y + y, side, component, port };
 }
 
-const OUT = { l: [-1, 0], r: [1, 0], t: [0, -1], b: [0, 1] };
+// Los orificios de la protoboard ('c') no tienen lado: el cable sale derecho del orificio.
+const OUT = { l: [-1, 0], r: [1, 0], t: [0, -1], b: [0, 1], c: [0, 0] };
 
 function linkPath(link) {
   const a = endPosition(link.a);
@@ -410,6 +443,8 @@ function linkPath(link) {
 // Las etiquetas de los puertos se escriben siempre derechas, aunque el componente esté girado.
 function portLabel(def, port, rot) {
   const { x, y, side } = placePort(def, port, rot);
+  // Los orificios de la protoboard se identifican por las letras y números de la placa.
+  if (side === 'c') return '';
   if (side === 'l') return `<text class="sm" x="${x + 8}" y="${y + 4}">${esc(port.label)}</text>`;
   if (side === 'r') return `<text class="sm" x="${x - 8}" y="${y + 4}" text-anchor="end">${esc(port.label)}</text>`;
   if (side === 't') return `<text class="sm" x="${x + 6}" y="${y + 12}">${esc(port.label)}</text>`;
@@ -427,7 +462,7 @@ function renderCanvas() {
     const d = linkPath(link);
     const a = endPosition(link.a);
     const b = endPosition(link.b);
-    const name = `${link.kind === 'air' ? 'Manguera' : 'Cable'} de ${a.component.label}:${a.port.label} a ${b.component.label}:${b.port.label}`;
+    const name = `${linkName(link.kind)} de ${a.component.label}:${a.port.label} a ${b.component.label}:${b.port.label}`;
     const live = sv ? sv.links.get(link.id) : '';
     return `<g class="ed-link ${link.kind}${selected('link', link.id) ? ' selected' : ''}${live ? ` live ${live}` : ''}" data-link="${link.id}" tabindex="0" role="button" aria-label="${esc(name)}">
       <path class="hit" d="${d}"/><path class="line" d="${d}"/></g>`;
@@ -436,18 +471,22 @@ function renderCanvas() {
   const components = p.components.map((component) => {
     const def = definition(component.type);
     const [w, h] = sizeOf(component);
-    const color = def.colorable ? ledColor(component.config.color) : null;
+    let color = def.colorable ? ledColor(component.config.color) : null;
     const ports = def.ports.map((port) => {
       const { x, y } = placePort(def, port, component.rot);
       const key = keyOf({ c: component.id, p: port.id });
       const pending = ed.pending && keyOf(ed.pending) === key;
-      return `<g class="ed-port ${port.kind}${port.pin ? ' pin' : ''}${connected.has(key) ? ' used' : ''}${pending ? ' pending' : ''}"
+      const r = port.hole ? [8, 4] : [10, 5];
+      return `<g class="ed-port ${port.kind}${port.pin ? ' pin' : ''}${port.hole ? ' hole' : ''}${connected.has(key) ? ' used' : ''}${pending ? ' pending' : ''}"
         data-port="${esc(port.id)}" data-comp="${component.id}" tabindex="0" role="button" aria-label="Puerto ${esc(port.label)} de ${esc(component.label)}">
-        <circle class="hit" cx="${x}" cy="${y}" r="10"/><circle class="dot" cx="${x}" cy="${y}" r="5"/></g>`;
+        <circle class="hit" cx="${x}" cy="${y}" r="${r[0]}"/><circle class="dot" cx="${x}" cy="${y}" r="${r[1]}"/></g>`;
     }).join('');
     let extra = def.value ? formatOhms(component.config[def.value.key]) : color ? color.label.toLowerCase() : '';
     const live = sv?.parts.get(component.id);
     let glyph = def.glyph;
+    if (component.type === 'servo') glyph = servoGlyph(servoAngles(component).off);
+    if (component.type === 'lcd-i2c') glyph = lcdGlyph(lcdLines(component).map(lcdClean));
+    if (component.type === 'tanque') glyph = tankGlyph(param(component, 'inicio'));
     let state = '';
     let hint = 'Clic derecho para más opciones.';
     if (live) {
@@ -460,7 +499,29 @@ function renderCanvas() {
         extra = `${Math.round(live.pos)} %`;
       }
       if (live.burned) extra = 'quemado';
-      if (component.type === 'potenciometro') extra = String(live.value);
+      if (def.analog) extra = def.analog.map((a) => `${live.values[a.port]}${a.unit ? ` ${a.unit}` : ''}`).join(' / ');
+      if (component.type === 'servo') {
+        glyph = servoGlyph(live.angle);
+        extra = `${Math.round(live.angle)}°`;
+      }
+      if (component.type === 'lcd-i2c') glyph = lcdGlyph(live.text);
+      if (component.type === 'display-7seg') glyph = segmentGlyph(live.energized);
+      if (component.type === 'led-rgb') {
+        // El color que se ve es la mezcla de los LED encendidos.
+        const [r, g, b] = live.energized;
+        const names = { 100: 'rojo', '010': 'verde', '001': 'azul', 110: 'amarillo', '011': 'cian', 101: 'morado', 111: 'blanco' };
+        const code = [r, g, b].map((on) => (on ? 1 : 0)).join('');
+        if (names[code]) {
+          color = { hex: `rgb(${r ? 255 : 40}, ${g ? 220 : 40}, ${b ? 255 : 40})`, label: names[code] };
+          extra = names[code];
+        }
+      }
+      if (component.type === 'motor-dc' && live.active) extra = 'gira';
+      if (component.type === 'zumbador' && live.active) extra = 'suena';
+      if (component.type === 'transistor-npn') extra = live.on ? 'conduce' : 'abierto';
+      const energy = energyText(ed.sim, component);
+      if (energy) extra = energy;
+      if (component.type === 'tanque') glyph = tankGlyph((live.litros / param(component, 'capacidad')) * 100);
       hint = mode === 'hold' ? 'Mantén presionado para accionarlo.' : mode === 'toggle' ? 'Haz clic para accionarlo o liberarlo.' : mode === 'slider' ? 'Muévelo en la pestaña Ejecución.' : '';
     }
     return `<g class="ed-comp${selected('component', component.id) ? ' selected' : ''}${flagged.has(component.id) ? ' flagged' : ''}${color ? ' led' : ''}${state}"
@@ -477,6 +538,33 @@ function renderCanvas() {
   const empty = p.components.length ? '' : `<text class="ed-hint" x="${CANVAS_W / 2}" y="160" text-anchor="middle">Agrega componentes desde el catálogo.</text>`;
   $('ed-layer').innerHTML = links + components + empty;
   $('ed-del').disabled = !ed.selected;
+  highlightTutorial();
+}
+
+function paramFields(component) {
+  return `<h4 class="label">Parámetros</h4>${definition(component.type).energy.params.map((p) => {
+    const value = param(component, p.key);
+    const input = p.options
+      ? `<select data-param="${p.key}">${p.options.map((o) => `<option value="${o}"${o === value ? ' selected' : ''}>${o} ${esc(p.unit)}</option>`).join('')}</select>`
+      : `<input type="number" data-param="${p.key}" min="${p.min}" max="${p.max}" step="${p.step}" value="${value}">`;
+    return `<label class="field">${esc(p.label)}${p.options ? '' : ` (${esc(p.unit)})`}${input}</label>`;
+  }).join('')}`;
+}
+
+function servoFields(component) {
+  const { off, on } = servoAngles(component);
+  return `<div class="runs">
+      <label class="field">Ángulo en reposo<input type="number" id="ed-servo-off" min="0" max="180" value="${off}"></label>
+      <label class="field">Ángulo activo<input type="number" id="ed-servo-on" min="0" max="180" value="${on}"></label>
+    </div>
+    <p class="tip">Las reglas lo mueven al ángulo activo o lo regresan al de reposo. "Mover según la lectura" reparte la lectura entre los dos.</p>`;
+}
+
+function lcdFields(component) {
+  const lines = lcdLines(component);
+  return `<label class="field">Renglón 1<input id="ed-lcd-0" value="${esc(lines[0])}" maxlength="40"></label>
+    <label class="field">Renglón 2<input id="ed-lcd-1" value="${esc(lines[1])}" maxlength="40"></label>
+    <p class="tip">Cada renglón muestra 16 caracteres. Escribe {A0}, {D2} u otro pin entre llaves para mostrar su lectura. La pantalla no tiene acentos ni ñ: se escriben con la letra simple.</p>`;
 }
 
 function resistorFields(component) {
@@ -671,6 +759,13 @@ const SIMPLIFICATIONS = `
       <li>No hay caída de presión, fugas ni contrapresión en los escapes.</li>
       <li>Los sensores detectan al cilindro más cercano al final de su carrera, salvo que elijas otro en Selección.</li>
       <li>El Arduino ejecuta las reglas de Lógica, igual que el código generado.</li>
+      <li>Un transistor conduce de colector a emisor si su base recibe tensión. No calcula ganancia ni saturación.</li>
+      <li>Los sensores de luz y temperatura entregan el valor que pongas con su control deslizante.</li>
+      <li>La protoboard une por dentro cada columna de 5 orificios y cada riel. Los componentes se conectan a ella con cables.</li>
+      <li>El ultrasónico entrega la distancia que pongas con su control deslizante. Sin VCC, GND o Trig lee 400 cm, como si no hubiera eco.</li>
+      <li>Un servo gira a 600° por segundo, como un SG90 sin carga. No modela peso en el brazo ni falta de corriente.</li>
+      <li>La pantalla muestra su texto si tiene VCC, GND, SDA en A4 y SCL en A5. No revisa la dirección I2C ni el contraste.</li>
+      ${ENERGY_SIMPLIFICATIONS.map((t) => `<li>${t}</li>`).join('')}
     </ul>
     <p class="tip">Que funcione aquí no garantiza que funcione el circuito real. Revisa siempre antes de energizar.</p>
   </details>`;
@@ -689,11 +784,17 @@ function renderRunPanel(panel) {
   const p = ed.project;
   const controls = p.components.map((c) => {
     const mode = interaction(c);
-    if (mode === 'hold') return `<button type="button" class="hold" data-hold="${c.id}" aria-pressed="false">Mantén ${esc(c.label)}</button>`;
-    if (mode === 'toggle') return `<button type="button" data-action="sim-toggle" data-id="${c.id}" aria-pressed="false">${esc(c.label)}: ${c.type === 'paro-emergencia' ? 'oprimir' : 'accionar'}</button>`;
-    if (mode === 'slider') return `<label class="field">${esc(c.label)} · <span id="run-pot-${c.id}">${ed.sim.parts.get(c.id).value}</span>
-      <input type="range" min="0" max="${SIM.ADC_MAX}" value="${ed.sim.parts.get(c.id).value}" data-pot="${c.id}"></label>`;
-    return '';
+    const mod = definition(c.type).module;
+    const out = [];
+    if (mode === 'hold') out.push(`<button type="button" class="hold" data-hold="${c.id}" aria-pressed="false">${mod ? `${esc(c.label)}: simular ${esc(mod.label)}` : `Mantén ${esc(c.label)}`}</button>`);
+    if (mode === 'toggle') out.push(`<button type="button" data-action="sim-toggle" data-id="${c.id}" aria-pressed="false">${esc(c.label)}: ${c.type === 'paro-emergencia' ? 'oprimir' : 'accionar'}</button>`);
+    // Un componente puede tener varias lecturas analógicas, como los dos ejes del joystick.
+    for (const a of definition(c.type).analog ?? []) {
+      const value = ed.sim.parts.get(c.id).values[a.port];
+      out.push(`<label class="field">${esc(c.label)} (${esc(a.label)}${a.unit ? `, ${esc(a.unit)}` : ''}) · <span id="run-pot-${c.id}-${esc(a.port)}">${value}</span>
+      <input type="range" min="${a.min ?? 0}" max="${a.max ?? SIM.ADC_MAX}" value="${value}" data-pot="${c.id}" data-port="${esc(a.port)}"></label>`);
+    }
+    return out.join('');
   }).filter(Boolean);
   const cylinders = p.components.filter((c) => c.type.startsWith('cilindro'));
   const pins = ed.sim.boards.map((b) => {
@@ -703,8 +804,35 @@ function renderRunPanel(panel) {
       <table class="pins live"><tbody>${used.map((r) => `
         <tr><th scope="row">${r.id}</th><td>${esc(r.name)}</td><td id="run-pin-${b.board.id}-${r.id}">—</td></tr>`).join('')}</tbody></table>`;
   }).join('');
+  const env = ed.sim.env;
+  const energy = ed.sim.energy?.has ? `
+    <h4 class="label">Ambiente</h4>
+    <div class="run-controls env">
+      ${ENV_CONTROLS.map((c) => `<label class="field">${esc(c.label)} · <span id="run-env-${c.key}">${env[c.key]} ${esc(c.unit)}</span>
+        <input type="range" min="${c.min}" max="${c.max}" step="${c.step}" value="${env[c.key]}" data-env="${c.key}"></label>`).join('')}
+      <label class="field">Velocidad del tiempo de la energía
+        <select data-env="escala">${ESCALAS.map((e) => `<option value="${e.value}"${e.value === env.escala ? ' selected' : ''}>${esc(e.label)}</option>`).join('')}</select></label>
+      <label class="check"><input type="checkbox" data-env="dia"${env.dia ? ' checked' : ''}> Ciclo de un día (el sol sale a las 6 y se mete a las 18)</label>
+    </div>
+    <h4 class="label">Energía en este momento</h4>
+    <table class="pins live energy"><tbody>
+      <tr><th scope="row">Generación</th><td id="run-e-gen">—</td></tr>
+      <tr><th scope="row">Consumo</th><td id="run-e-consumo">—</td></tr>
+      <tr><th scope="row">Batería</th><td id="run-e-bateria">—</td></tr>
+      <tr><th scope="row">Red eléctrica</th><td id="run-e-red">—</td></tr>
+    </tbody></table>
+    <h4 class="label">Acumulado</h4>
+    <table class="pins live energy"><tbody>
+      <tr><th scope="row">Tiempo simulado</th><td id="run-e-tiempo">—</td></tr>
+      <tr><th scope="row">Solar · eólica · hidráulica</th><td id="run-e-fuentes">—</td></tr>
+      <tr><th scope="row">Consumida</th><td id="run-e-consumida">—</td></tr>
+      <tr><th scope="row">Importada · exportada</th><td id="run-e-red-total">—</td></tr>
+      <tr><th scope="row">Desperdiciada (recortada)</th><td id="run-e-recortada">—</td></tr>
+      <tr><th scope="row">CO₂ evitado</th><td id="run-e-co2">—</td></tr>
+    </tbody></table>` : '';
   panel.innerHTML = `
     <p class="verdict pass" id="run-time" role="status">En ejecución</p>
+    ${energy}
     ${controls.length ? `<h4 class="label">Controles</h4><div class="run-controls">${controls.join('')}</div>
       <p class="tip">También puedes presionar los componentes directo en el plano.</p>`
       : '<p class="tip">Este proyecto no tiene pulsadores, palancas ni potenciómetros que accionar.</p>'}
@@ -720,7 +848,27 @@ function renderRunPanel(panel) {
 function updateRunPanel() {
   const sim = ed.sim;
   if (!sim || ed.tab !== 'ejecucion' || !$('run-time')) return;
-  $('run-time').textContent = `En ejecución · ${sim.t.toFixed(1)} s`;
+  $('run-time').textContent = `En ejecución · ${sim.t.toFixed(1)} s${sim.energy?.has && sim.env.dia ? ` · son las ${String(Math.floor(sim.env.hora)).padStart(2, '0')}:${String(Math.floor((sim.env.hora % 1) * 60)).padStart(2, '0')}` : ''}`;
+  if (sim.energy?.has && $('run-e-gen')) {
+    const { now, totals } = sim.energy;
+    const set = (id, text) => { const el = $(id); if (el && el.textContent !== text) el.textContent = text; };
+    for (const c of ENV_CONTROLS) {
+      set(`run-env-${c.key}`, `${sim.env[c.key]} ${c.unit}`);
+      const slider = document.querySelector(`input[data-env="${c.key}"]`);
+      if (slider && document.activeElement !== slider && Number(slider.value) !== sim.env[c.key]) slider.value = sim.env[c.key];
+    }
+    set('run-e-gen', fmtW(now.gen));
+    set('run-e-consumo', fmtW(now.consumo));
+    set('run-e-bateria', now.bateria > 1 ? `cargando ${fmtW(now.bateria)}` : now.bateria < -1 ? `entregando ${fmtW(-now.bateria)}` : 'en reposo');
+    set('run-e-red', now.red > 1 ? `importando ${fmtW(now.red)}` : now.red < -1 ? `exportando ${fmtW(-now.red)}` : 'sin flujo');
+    const hours = (sim.t * sim.env.escala) / 3600;
+    set('run-e-tiempo', hours >= 1 ? `${hours.toFixed(1)} h` : `${Math.round(hours * 60)} min`);
+    set('run-e-fuentes', `${fmtWh(totals.solar)} · ${fmtWh(totals.eolica)} · ${fmtWh(totals.hidraulica)}`);
+    set('run-e-consumida', fmtWh(totals.consumo));
+    set('run-e-red-total', `${fmtWh(totals.importada)} · ${fmtWh(totals.exportada)}`);
+    set('run-e-recortada', fmtWh(totals.recortada));
+    set('run-e-co2', `${(((totals.solar + totals.eolica + totals.hidraulica) / 1000) * ENERGY.CO2).toFixed(2)} kg`);
+  }
   for (const c of ed.project.components) {
     const part = sim.parts.get(c.id);
     const bar = $(`run-pos-${c.id}`);
@@ -728,8 +876,10 @@ function updateRunPanel() {
       bar.value = part.pos;
       $(`run-posv-${c.id}`).textContent = `${Math.round(part.pos)} %`;
     }
-    const pot = $(`run-pot-${c.id}`);
-    if (pot) pot.textContent = String(part.value);
+    for (const a of definition(c.type).analog ?? []) {
+      const pot = $(`run-pot-${c.id}-${a.port}`);
+      if (pot) pot.textContent = String(part.values[a.port]);
+    }
     const toggleButton = document.querySelector(`[data-action="sim-toggle"][data-id="${c.id}"]`);
     if (toggleButton) toggleButton.setAttribute('aria-pressed', String(part.toggled));
     const hold = document.querySelector(`[data-hold="${c.id}"]`);
@@ -741,8 +891,9 @@ function updateRunPanel() {
       if (!cell) continue;
       const level = b.levels.get(r.id);
       const value = b.values?.get?.(r.id);
-      cell.textContent = r.mode === 'analog' ? String(value ?? 0) : `${level ?? '—'}${value === true || (r.mode === 'output' && b.state.get(r.id)) ? ' · activa' : ''}`;
-      cell.className = (r.mode === 'analog' ? false : level === r.active) ? 'on' : '';
+      const special = { analog: String(value ?? 0), distance: `${value ?? 0} cm`, servo: `${value ?? 0}°`, trig: 'pulsos', i2c: 'I2C' }[r.mode];
+      cell.textContent = special ?? `${level ?? '—'}${value === true || (r.mode === 'output' && b.state.get(r.id)) ? ' · activa' : ''}`;
+      cell.className = (special ? false : level === r.active) ? 'on' : '';
     }
   }
   const items = sim.events.slice(-8).reverse();
@@ -756,7 +907,8 @@ function updateRunPanel() {
 
 function simSignature(sv) {
   let text = [...sv.links.values()].join(',');
-  for (const [id, part] of sv.parts) text += `|${id}:${part.active ? 1 : 0}${part.burned ? 'b' : ''}${Math.round(part.pos)}:${part.value}`;
+  if (ed.sim?.energy?.has) text += ed.project.components.map((c) => energyText(ed.sim, c)).join('|');
+  for (const [id, part] of sv.parts) text += `|${id}:${part.active ? 1 : 0}${part.burned ? 'b' : ''}${Math.round(part.pos)}:${part.value}:${Object.values(part.values ?? {}).join('/')}:${Math.round(part.angle ?? 0)}:${(part.text ?? []).join('|')}`;
   return text;
 }
 
@@ -788,6 +940,7 @@ function simLoop(now) {
     if (focused?.closest?.('#ed-canvas')) refocus(focused);
   }
   updateRunPanel();
+  if (updateTutorial()) renderTutorial();
   ed.simFrame = requestAnimationFrame(simLoop);
 }
 
@@ -898,6 +1051,9 @@ function renderInspector() {
         <select id="ed-color">${LED_COLORS.map((c) => `<option value="${c.id}"${c.id === component.config.color ? ' selected' : ''}>${c.label} (${c.vf} V)</option>`).join('')}</select>
       </label>` : ''}
       ${def.value ? resistorFields(component) : ''}
+      ${def.servo ? servoFields(component) : ''}
+      ${def.lcd ? lcdFields(component) : ''}
+      ${def.energy?.params ? paramFields(component) : ''}
       <h4 class="label">Conexiones</h4>
       ${own.length ? `<ul class="plain">${own.join('')}</ul>` : '<p class="tip">Sin conexiones. Toca uno de sus puertos y luego otro puerto.</p>'}
       <button type="button" data-action="delete-selection">Borrar componente</button>`;
@@ -908,7 +1064,7 @@ function renderInspector() {
     const a = endPosition(link.a);
     const b = endPosition(link.b);
     panel.innerHTML = `
-      <h3>${link.kind === 'air' ? 'Manguera' : 'Cable'}</h3>
+      <h3>${linkName(link.kind)}</h3>
       <p>De ${esc(a.component.label)}:${esc(a.port.label)} a ${esc(b.component.label)}:${esc(b.port.label)}.</p>
       <button type="button" data-action="delete-selection">Borrar conexión</button>`;
     return;
@@ -917,7 +1073,7 @@ function renderInspector() {
     <h3>Cómo armar tu sistema</h3>
     <ol class="steps">
       <li>Elige componentes en el catálogo. Filtra por tipo de sistema o busca por nombre.</li>
-      <li>Para conectar, toca un puerto y luego otro. Los puertos azules son de aire y los demás eléctricos.</li>
+      <li>Para conectar, toca un puerto y luego otro. Cada color es un tipo de conexión: azul aire, amarillo control eléctrico, rojo potencia, gris eje y verde agua. Solo se unen puertos del mismo tipo.</li>
       <li>Arrastra los componentes para acomodarlos. Con flechas los mueves, con R los giras y con Supr los borras.</li>
       <li>Clic derecho sobre un componente para girarlo, cambiar el color de un LED, el valor de una resistencia o duplicarlo.</li>
       <li>Revisa la pestaña Revisión antes de armar el circuito real.</li>
@@ -934,18 +1090,18 @@ function renderArduino() {
   ed.board = board.id;
   const rows = pinRows(ed.project, board);
   const inputs = rows.filter((r) => isInputMode(r.mode));
-  const outputs = rows.filter((r) => r.mode === 'output');
+  const outputs = rows.filter((r) => isOutput(r.mode));
   const pinOption = (row, current) => `<option value="${row.id}"${row.id === current ? ' selected' : ''}>${esc(row.id)} · ${esc(row.name)}</option>`;
   const missing = (current, pool) => (current && !pool.some((r) => r.id === current) ? `<option value="${esc(current)}" selected>${esc(current)} (no válido)</option>` : '');
 
   const table = rows.map((row) => {
     const auto = row.inferred.mode ? PIN_MODES.find((m) => m.id === row.inferred.mode).label : 'Sin usar';
     const manualMode = row.manual.mode ?? 'auto';
-    const fixedActive = row.mode === 'none' || row.mode === 'analog';
+    const fixedActive = row.mode === 'none' || row.mode === 'analog' || PIN_MODES.find((m) => m.id === row.mode)?.auto;
     return `<tr class="${row.mode === 'none' ? 'unused' : ''}">
       <th scope="row">${row.id}${row.notes.length ? `<small>${esc(row.notes.join(' · '))}</small>` : ''}</th>
       <td><select data-pin="${row.id}" data-field="mode" aria-label="Modo de ${row.id}">
-        ${PIN_MODES.map((m) => `<option value="${m.id}"${m.id === manualMode ? ' selected' : ''}>${m.id === 'auto' ? `Automático: ${esc(auto)}` : esc(m.label)}</option>`).join('')}
+        ${PIN_MODES.filter((m) => !m.auto || m.id === manualMode).map((m) => `<option value="${m.id}"${m.id === manualMode ? ' selected' : ''}>${m.id === 'auto' ? `Automático: ${esc(auto)}` : esc(m.label)}</option>`).join('')}
       </select></td>
       <td><input data-pin="${row.id}" data-field="name" aria-label="Nombre de ${row.id}" value="${esc(row.manual.name ?? '')}" placeholder="${esc(row.name)}" maxlength="24"></td>
       <td><select data-pin="${row.id}" data-field="active" aria-label="Nivel activo de ${row.id}"${fixedActive ? ' disabled' : ''}>
@@ -958,15 +1114,19 @@ function renderArduino() {
 
   const rules = (board.config.rules ?? []).map((rule, index) => {
     const input = rows.find((r) => r.id === rule.input);
-    const analog = input?.mode === 'analog';
-    const conditions = CONDITIONS.filter((c) => c.analog === analog);
+    const output = rows.find((r) => r.id === rule.output);
+    const range = RANGES[input?.mode];
+    const conditions = CONDITIONS.filter((c) => c.analog === Boolean(range));
+    // "Mover según la lectura" solo aparece para un servo con una entrada que da un número.
+    const actions = ACTIONS.filter((a) => !a.servo || a.id === rule.action || (output?.mode === 'servo' && range));
+    const byReading = rule.action === 'angulo';
     return `<li>
-      <span>Si</span>
+      <span>${byReading ? 'Con' : 'Si'}</span>
       <select data-rule="${index}" data-field="input" aria-label="Entrada de la regla ${index + 1}">${missing(rule.input, inputs)}${inputs.map((r) => pinOption(r, rule.input)).join('')}</select>
-      <select data-rule="${index}" data-field="cond" aria-label="Condición de la regla ${index + 1}">${conditions.map((c) => `<option value="${c.id}"${c.id === rule.cond ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>
-      ${analog ? `<input type="number" min="0" max="1023" data-rule="${index}" data-field="value" value="${Number(rule.value) || 0}" aria-label="Valor de la regla ${index + 1}">` : ''}
+      ${byReading ? '' : `<select data-rule="${index}" data-field="cond" aria-label="Condición de la regla ${index + 1}">${conditions.map((c) => `<option value="${c.id}"${c.id === rule.cond ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>`}
+      ${range && !byReading ? `<input type="number" min="${range.min}" max="${range.max}" data-rule="${index}" data-field="value" value="${Number(rule.value) || 0}" aria-label="Valor de la regla ${index + 1}">${range.unit ? `<span>${range.unit}</span>` : ''}` : ''}
       <span>→</span>
-      <select data-rule="${index}" data-field="action" aria-label="Acción de la regla ${index + 1}">${ACTIONS.map((a) => `<option value="${a.id}"${a.id === rule.action ? ' selected' : ''}>${esc(a.label)}</option>`).join('')}</select>
+      <select data-rule="${index}" data-field="action" aria-label="Acción de la regla ${index + 1}">${actions.map((a) => `<option value="${a.id}"${a.id === rule.action ? ' selected' : ''}>${esc(a.label)}</option>`).join('')}</select>
       <select data-rule="${index}" data-field="output" aria-label="Salida de la regla ${index + 1}">${missing(rule.output, outputs)}${outputs.map((r) => pinOption(r, rule.output)).join('')}</select>
       <button type="button" data-action="remove-rule" data-rule="${index}" aria-label="Quitar la regla ${index + 1}">Quitar</button>
     </li>`;
@@ -1037,9 +1197,149 @@ function zoomToFit() {
 }
 
 function refresh() {
+  ed.v3d?.rebuild();
   renderCanvas();
   renderInspector();
   renderArduino();
+  renderTutorial();
+}
+
+// ── Tutoriales ──
+const shortTitle = (t) => { const rest = t.title.replace(/^[^:]+:\s*/, ''); return rest.charAt(0).toUpperCase() + rest.slice(1); };
+
+function tutorialContext() {
+  return {
+    project: ed.project,
+    sim: ed.sim,
+    view: ed.sim ? ed.simView : null,
+    mode3d: ed.mode3d,
+    get errors() { return review().filter((f) => f.level === 'error').length; },
+  };
+}
+
+/** Revisa si el paso actual ya se cumplió. Devuelve true si cambió el avance. */
+function updateTutorial() {
+  const state = ed.project?.tutorial;
+  const tutorial = state && tutorialOf(state.id);
+  if (!tutorial) return false;
+  const next = advanceTutorial(tutorial, state.step, tutorialContext());
+  if (next === state.step) return false;
+  state.step = next;
+  saveAll();
+  return true;
+}
+
+function renderTutorial() {
+  const card = $('ed-tutorial');
+  if (!card) return;
+  const state = ed.project?.tutorial;
+  const tutorial = state && tutorialOf(state.id);
+  card.hidden = !tutorial;
+  if (!tutorial) {
+    highlightTutorial();
+    return;
+  }
+  updateTutorial();
+  const total = tutorial.steps.length;
+  const i = state.step;
+  const list = tutorial.steps.map((step, n) => `<li class="${n < i ? 'done' : n === i ? 'current' : ''}">${esc(stepText(tutorial, step, ed.project).title)}</li>`).join('');
+  if (i >= total) {
+    card.innerHTML = `
+      <p class="label">Tutorial terminado</p>
+      <h3>¡Listo! Tu proyecto funciona</h3>
+      <p>${esc(tutorial.goal)} Lo comprobaste en la simulación y en la vista 3D.</p>
+      <p class="tip">Ahora cámbialo a tu gusto o empieza otro tutorial desde Mis proyectos.</p>
+      <details><summary>Ver los ${total} pasos</summary><ol class="tutorial-steps">${list}</ol></details>
+      <button type="button" data-action="tutorial-close">Cerrar tutorial</button>`;
+  } else {
+    const step = tutorial.steps[i];
+    const { title, body } = stepText(tutorial, step, ed.project);
+    card.innerHTML = `
+      <p class="label">Tutorial · paso ${i + 1} de ${total}</p>
+      <progress max="${total}" value="${i}" aria-label="Avance del tutorial"></progress>
+      <h3>${esc(title)}</h3>
+      <p>${esc(body)}</p>
+      <p class="tip">${canApply(step) ? 'Este paso se marca solo cuando lo hagas.' : 'Este paso es la prueba: hazlo tú y se marca solo cuando se cumpla.'}</p>
+      <div class="runs">
+        ${canApply(step) ? '<button type="button" data-action="tutorial-do">Hazlo por mí</button>' : ''}
+        <button type="button" data-action="tutorial-close">Salir del tutorial</button>
+      </div>
+      <details><summary>Todos los pasos</summary><p class="tip">${esc(tutorial.goal)}</p><ol class="tutorial-steps">${list}</ol></details>`;
+  }
+  highlightTutorial();
+}
+
+/** Marca en pantalla lo que hay que tocar en el paso actual. */
+function highlightTutorial() {
+  document.querySelectorAll('.tut-target').forEach((el) => el.classList.remove('tut-target'));
+  const state = ed.project?.tutorial;
+  const tutorial = state && tutorialOf(state.id);
+  const step = tutorial?.steps[state.step];
+  if (!step) return;
+  const target = stepTarget(tutorial, step, ed.project);
+  const mark = (selector) => document.querySelectorAll(selector).forEach((el) => el.classList.add('tut-target'));
+  if (target.palette) mark(`.pal-item[data-type="${target.palette}"]`);
+  for (const port of target.ports ?? []) mark(`.ed-port[data-comp="${port.c}"][data-port="${CSS.escape(port.p)}"]`);
+  if (target.component) mark(`.ed-comp[data-comp="${target.component}"]`);
+  if (target.selector) mark(target.selector);
+}
+
+function startTutorial(id) {
+  const tutorial = tutorialOf(id);
+  const project = createProject({ name: `Tutorial · ${shortTitle(tutorial)}`, system: tutorial.system });
+  project.tutorial = { id, step: 0 };
+  ed.projects.push(project);
+  saveAll();
+  openProject(project.id);
+  setStatus('Tutorial iniciado: sigue los pasos de la tarjeta de la derecha. Lo que debes tocar se marca en la pantalla.');
+}
+
+// ── Vista 3D ──
+function closeView3d() {
+  ed.v3d?.dispose();
+  ed.v3d = null;
+  ed.mode3d = false;
+}
+
+function setView(mode) {
+  const is3d = mode === '3d';
+  ed.mode3d = is3d;
+  $('ed-3d').hidden = !is3d;
+  $('ed-wrap').hidden = is3d;
+  $('ed-zoom').hidden = is3d;
+  $('ed-v2d').setAttribute('aria-pressed', String(!is3d));
+  $('ed-v3d').setAttribute('aria-pressed', String(is3d));
+  if (updateTutorial()) renderTutorial();
+  if (!is3d || ed.v3d || ed.v3dLoading) return;
+  ed.v3dLoading = true;
+  setStatus('Cargando la vista 3D…');
+  const project = ed.project;
+  createView3d($('ed-3d'), {
+    project: () => ed.project,
+    view: () => (ed.sim ? ed.simView : null),
+    interaction,
+    press: (id) => {
+      if (!ed.sim) return;
+      releaseHold();
+      ed.holding = id;
+      press(ed.sim, id, true);
+    },
+    toggle: (id) => { if (ed.sim) toggle(ed.sim, id); },
+    select: (id) => select({ type: 'component', id }),
+  }).then((view) => {
+    ed.v3dLoading = false;
+    // Si mientras cargaba se cambió de proyecto o de vista, se descarta.
+    if (ed.project !== project || !ed.mode3d || !$('ed-3d')) {
+      view.dispose();
+      return;
+    }
+    ed.v3d = view;
+    setStatus('Vista 3D: es el mismo proyecto y la misma simulación que en 2D, dibujados en una mesa de trabajo.');
+  }).catch((error) => {
+    ed.v3dLoading = false;
+    if ($('ed-3d')) setView('2d');
+    setStatus(`No se pudo abrir la vista 3D: ${error.message}. Sigue disponible la vista 2D.`, 'warn');
+  });
 }
 
 function select(selection) {
@@ -1142,19 +1442,24 @@ function handlePort(componentId, portId) {
     return;
   }
   touch();
-  setStatus(`${result.link.kind === 'air' ? 'Manguera' : 'Cable'} conectado.`);
+  setStatus(`${linkName(result.link.kind)}: conectado.`);
   refresh();
 }
 
 function updateRule(index, field, value) {
   const board = ed.project.components.find((c) => c.id === ed.board);
   const rule = board.config.rules[index];
-  rule[field] = field === 'value' ? clamp(Math.round(Number(value) || 0), 0, 1023) : value;
+  const rows = pinRows(ed.project, board);
+  const range = RANGES[rows.find((r) => r.id === rule.input)?.mode];
+  rule[field] = field === 'value' ? clamp(Math.round(Number(value) || 0), range?.min ?? 0, range?.max ?? 1023) : value;
   if (field === 'input') {
-    const row = pinRows(ed.project, board).find((r) => r.id === value);
-    const analog = row?.mode === 'analog';
-    if (CONDITIONS.find((c) => c.id === rule.cond)?.analog !== analog) rule.cond = analog ? 'mayor' : 'activa';
-    if (analog && rule.value === undefined) rule.value = 512;
+    const next = RANGES[rows.find((r) => r.id === value)?.mode];
+    if (CONDITIONS.find((c) => c.id === rule.cond)?.analog !== Boolean(next)) rule.cond = next ? 'mayor' : 'activa';
+    if (next && !(rule.value >= next.min && rule.value <= next.max)) rule.value = next.start;
+  }
+  // Si la regla ya no tiene un servo con una lectura, "mover según la lectura" vuelve a "que siga".
+  if (rule.action === 'angulo' && !(rows.find((r) => r.id === rule.output)?.mode === 'servo' && isMeasured(rows.find((r) => r.id === rule.input)?.mode))) {
+    rule.action = 'seguir';
   }
 }
 
@@ -1167,6 +1472,38 @@ function bindEditor() {
     const action = target.dataset.action;
     if (target.closest('#ed-menu')) closeMenu();
     if (ed.sim && EDIT_ACTIONS.has(action)) stopSim('Detuve la simulación para que puedas editar.');
+    if (action === 'view') {
+      setView(target.dataset.view);
+      return;
+    }
+    if (action === 'tutorial-start') {
+      startTutorial(target.dataset.id);
+      return;
+    }
+    if (action === 'tutorial-close') {
+      delete ed.project.tutorial;
+      touch();
+      renderTutorial();
+      setStatus('Saliste del tutorial. El proyecto se queda como está.');
+      return;
+    }
+    if (action === 'tutorial-do') {
+      const state = ed.project.tutorial;
+      const tutorial = tutorialOf(state.id);
+      stopSim('');
+      try {
+        setStatus(applyStep(tutorial, tutorial.steps[state.step], ed.project));
+      } catch (error) {
+        setStatus(error.message, 'warn');
+      }
+      touch();
+      refresh();
+      return;
+    }
+    if (action === 'view-frame') {
+      ed.v3d?.frame();
+      return;
+    }
     if (action === 'run') {
       if (ed.sim) stopSim();
       else startSim();
@@ -1339,10 +1676,10 @@ function bindEditor() {
       const board = ed.project.components.find((c) => c.id === ed.board);
       const rows = pinRows(ed.project, board);
       const input = rows.find((r) => isInputMode(r.mode));
-      const output = rows.find((r) => r.mode === 'output');
+      const output = rows.find((r) => isOutput(r.mode));
       if (!input || !output) return;
-      const analog = input.mode === 'analog';
-      board.config.rules.push({ input: input.id, cond: analog ? 'mayor' : 'activa', value: analog ? 512 : undefined, output: output.id, action: 'seguir' });
+      const range = RANGES[input.mode];
+      board.config.rules.push({ input: input.id, cond: range ? 'mayor' : 'activa', value: range ? range.start : undefined, output: output.id, action: 'seguir' });
       touch();
       refresh();
     } else if (action === 'remove-rule') {
@@ -1382,10 +1719,14 @@ function bindEditor() {
 
   root.addEventListener('change', (event) => {
     const target = event.target;
-    if (ed.sim && !['ed-problem', 'ed-web-terms', 'ed-file', 'ed-search', 'ed-category'].includes(target.id) && !target.dataset.pot) {
+    if (ed.sim && !['ed-problem', 'ed-web-terms', 'ed-file', 'ed-search', 'ed-category'].includes(target.id) && !target.dataset.pot && !target.dataset.env) {
       stopSim('Detuve la simulación para que puedas editar.');
     }
     if (target.dataset.pot) return;
+    if (target.dataset.env) {
+      if (ed.sim) setEnv(ed.sim, target.dataset.env, target.type === 'checkbox' ? target.checked : target.value);
+      return;
+    }
     if (target.id === 'ed-file') {
       const file = target.files?.[0];
       if (!file) return;
@@ -1432,6 +1773,36 @@ function bindEditor() {
         setStatus('El valor debe estar entre 1 Ω y 10 MΩ.', 'warn');
         target.value = component.config.ohms;
       }
+    } else if (target.id === 'ed-servo-off' || target.id === 'ed-servo-on') {
+      const component = ed.project.components.find((c) => c.id === ed.selected?.id);
+      const angle = Math.round(Number(target.value));
+      if (Number.isFinite(angle) && angle >= 0 && angle <= 180) {
+        component.config.angles = { ...servoAngles(component), [target.id === 'ed-servo-on' ? 'on' : 'off']: angle };
+        touch();
+        refresh();
+      } else {
+        setStatus('El ángulo debe estar entre 0° y 180°.', 'warn');
+        target.value = servoAngles(component)[target.id === 'ed-servo-on' ? 'on' : 'off'];
+      }
+    } else if (target.id === 'ed-lcd-0' || target.id === 'ed-lcd-1') {
+      const component = ed.project.components.find((c) => c.id === ed.selected?.id);
+      const lines = lcdLines(component);
+      lines[target.id === 'ed-lcd-1' ? 1 : 0] = target.value.slice(0, 40);
+      component.config.lines = lines;
+      touch();
+      refresh();
+    } else if (target.dataset.param) {
+      const component = ed.project.components.find((c) => c.id === ed.selected?.id);
+      const p = definition(component.type).energy.params.find((x) => x.key === target.dataset.param);
+      const value = Number(target.value);
+      if (Number.isFinite(value) && value >= p.min && value <= p.max) {
+        component.config[p.key] = value;
+        touch();
+        refresh();
+      } else {
+        setStatus(`${p.label}: debe estar entre ${p.min} y ${p.max} ${p.unit}.`, 'warn');
+        target.value = param(component, p.key);
+      }
     } else if (target.id === 'ed-color') {
       const component = ed.project.components.find((c) => c.id === ed.selected?.id);
       component.config.color = target.value;
@@ -1463,8 +1834,12 @@ function bindEditor() {
   });
 
   root.addEventListener('input', (event) => {
+    if (event.target.dataset.env && ed.sim && event.target.type === 'range') {
+      setEnv(ed.sim, event.target.dataset.env, event.target.value);
+      return;
+    }
     if (event.target.dataset.pot && ed.sim) {
-      setValue(ed.sim, event.target.dataset.pot, event.target.value);
+      setValue(ed.sim, event.target.dataset.pot, event.target.value, event.target.dataset.port);
       return;
     }
     if (event.target.id === 'ed-search') {
@@ -1700,7 +2075,7 @@ function openMenu(x, y) {
   if (ed.selected.type === 'link') {
     const link = ed.project.links.find((l) => l.id === ed.selected.id);
     menu.innerHTML = `
-      <p class="menu-title">${link.kind === 'air' ? 'Manguera' : 'Cable'}</p>
+      <p class="menu-title">${linkName(link.kind)}</p>
       ${item('delete-selection', 'Borrar conexión', ' class="danger"', 'Supr')}`;
   } else {
     const component = ed.project.components.find((c) => c.id === ed.selected.id);

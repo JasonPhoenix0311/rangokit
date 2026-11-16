@@ -3,7 +3,7 @@
 // o de palabras del enunciado, y Rango dice cuándo no reconoce algo en lugar de inventar.
 import { definition, fold } from './catalog.js';
 import { createProject, addComponent, connect, nets, netOf, members, reviewWiring } from './project.js';
-import { boards, pinRows, reviewArduino, CONDITIONS } from './arduino.js';
+import { boards, pinRows, reviewArduino, isInput, isOutput, CONDITIONS, ACTIONS } from './arduino.js';
 import { createModel, train, predict } from './learn.js';
 
 const MANUAL = { 'valvula-32-boton': 'con botón', 'valvula-32-rodillo': 'con rodillo', 'valvula-52-palanca': 'con palanca' };
@@ -107,8 +107,8 @@ export function analyzeProject(project) {
     const rows = pinRows(project, board);
     const byId = (id) => rows.find((row) => row.id === id);
     const rules = board.config.rules ?? [];
-    const inputs = rows.filter((row) => ['input', 'input_pullup', 'analog'].includes(row.mode));
-    const outputs = rows.filter((row) => row.mode === 'output');
+    const inputs = rows.filter((row) => isInput(row.mode));
+    const outputs = rows.filter((row) => isOutput(row.mode));
     for (const output of outputs) {
       const mine = rules.filter((rule) => rule.output === output.id);
       const on = mine.find((rule) => rule.action === 'encender');
@@ -119,6 +119,9 @@ export function analyzeProject(project) {
         if (stopper && ['final-carrera', 'sensor-magnetico'].includes(stopper.type)) {
           goals.push(`Retorno automático: cuando ${stopper.label} detecta el final de la carrera, ${output.name} se apaga.`);
         }
+      }
+      for (const rule of mine.filter((r) => r.action === 'angulo')) {
+        goals.push(`${output.name} gira según la lectura de ${byId(rule.input)?.name ?? rule.input}.`);
       }
       for (const rule of mine.filter((r) => r.action === 'seguir')) {
         const condition = CONDITIONS.find((c) => c.id === rule.cond);
@@ -453,8 +456,12 @@ export function templateSteps(project) {
       const input = rows.find((r) => r.id === rule.input);
       const output = rows.find((r) => r.id === rule.output);
       const condition = CONDITIONS.find((c) => c.id === rule.cond);
+      if (rule.action === 'angulo') {
+        steps.push(`Regla: ${output.name} se mueve según la lectura de ${input.name}.`);
+        continue;
+      }
       const value = condition.analog ? ` ${rule.value}` : '';
-      const action = rule.action === 'seguir' ? 'que siga a la condición' : rule.action;
+      const action = ACTIONS.find((a) => a.id === rule.action)?.label ?? rule.action;
       steps.push(`Regla: si ${input.name} ${condition.label}${value} → ${action} ${output.name}.`);
     }
   }

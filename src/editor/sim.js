@@ -6,13 +6,20 @@
 // - Las tierras de 24 V y del Arduino solo son la misma si están unidas con un cable.
 // - Relés y válvulas responden con 30 ms de retardo. Cilindros a velocidad constante (2 s por carrera),
 //   más lentos si su manguera pasa por una reguladora. No hay caída de presión ni contrapresión.
+// - Un transistor conduce de colector a emisor si su base recibe tensión; no calcula ganancia ni saturación.
+// - Los sensores de luz y temperatura entregan el valor que pongas con su control deslizante.
+// - El ultrasónico entrega la distancia del control deslizante si tiene VCC, GND y Trig; si no, 400 cm (sin eco).
+// - Un servo gira a 600°/s (un SG90 sin carga) hacia el ángulo que mandan las reglas. No modela carga ni falta de corriente.
+// - La pantalla LCD muestra su texto si tiene VCC, GND, SDA en A4 y SCL en A5. No modela la dirección I2C ni el contraste.
 // - El Arduino ejecuta las reglas de la tabla de Lógica, igual que el código generado.
+// - Energía, ejes y agua: ver las simplificaciones de energia.js.
 import { reach } from '../engine.js';
-import { definition } from './catalog.js';
-import { keyOf, nets, netOf } from './project.js';
-import { boards, pinRows, ruleProblem, CONDITIONS } from './arduino.js';
+import { definition, servoAngles, lcdLines } from './catalog.js';
+import { keyOf, nets, netOf, internalEdges } from './project.js';
+import { boards, pinRows, ruleProblem, lcdsOf, lcdLine, RANGES, CONDITIONS } from './arduino.js';
+import { createEnergy, stepEnergy, ENERGY_TOGGLES, energyActive, energyLink, isEnergy } from './energia.js';
 
-export const SIM = { DT: 0.01, DELAY: 0.03, SPEED: 50, SLOW: 0.35, WINDOW: 3, ADC_MAX: 1023 };
+export const SIM = { DT: 0.01, DELAY: 0.03, SPEED: 50, SLOW: 0.35, WINDOW: 3, ADC_MAX: 1023, SERVO_SPEED: 600 };
 
 // Contactos de cada tipo: [borne, borne, NA o NC].
 const CONTACTS = {
@@ -23,6 +30,11 @@ const CONTACTS = {
   'sensor-magnetico': [['1', '2', 'NA']],
   'rele-24': [['13', '14', 'NA'], ['23', '24', 'NA'], ['11', '12', 'NC']],
   'modulo-rele': [['COM', 'NO', 'NA'], ['COM', 'NC', 'NC']],
+  'boton-tactil': [['1', '3', 'NA']],
+  'sensor-inclinacion': [['1', '2', 'NA']],
+  joystick: [['SW', 'GND', 'NA']],
+  interruptor: [['1', '2', 'NA']],
+  flotador: [['1', '2', 'NA']],
 };
 
 // Cargas: [positivo, negativo, tensión nominal, nombre, polarizada].
@@ -35,18 +47,25 @@ const LOADS = {
   led: [['A', 'K', 5, 'LED', true]],
   'led-solo': [['A', 'K', 5, 'LED', true]],
   optoacoplador: [['IN+', 'IN-', 24, 'entrada', true]],
+  zumbador: [['+', '-', 5, 'zumbador', true]],
+  'motor-dc': [['+', '-', 5, 'motor']],
+  'led-rgb': [['R', 'K', 5, 'LED rojo', true], ['G', 'K', 5, 'LED verde', true], ['B', 'K', 5, 'LED azul', true]],
+  contactor: [['A1', 'A2', 24, 'bobina']],
+  'display-7seg': ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'dp'].map((seg) => [seg, 'K', 5, `segmento ${seg}`, true]),
 };
 
 const SENSORS = new Set(['final-carrera', 'sensor-magnetico', 'sensor-inductivo', 'valvula-32-rodillo']);
-const HOLD = new Set(['pulsador-na', 'pulsador-nc', 'valvula-32-boton']);
-const TOGGLE = new Set(['paro-emergencia', 'valvula-52-palanca']);
+const HOLD = new Set(['pulsador-na', 'pulsador-nc', 'valvula-32-boton', 'boton-tactil', 'sensor-inclinacion', 'joystick']);
+const TOGGLE = new Set(['paro-emergencia', 'valvula-52-palanca', 'interruptor', ...ENERGY_TOGGLES]);
+// Módulos de sensor digitales y botones que se mantienen presionados.
+const isHold = (type) => HOLD.has(type) || Boolean(definition(type).module);
 const SOLENOID_VALVES = new Set(['valvula-32-sol', 'valvula-52-mono']);
 
 /** Cómo se usa un componente durante la simulación: mantener, alternar, deslizar o nada. */
 export function interaction(component) {
-  if (HOLD.has(component.type)) return 'hold';
+  if (isHold(component.type)) return 'hold';
   if (TOGGLE.has(component.type)) return 'toggle';
-  if (component.type === 'potenciometro') return 'slider';
+  if (definition(component.type).analog) return 'slider';
   if (SENSORS.has(component.type) && component.config.target === 'manual') return 'hold';
   return null;
 }
@@ -68,6 +87,16 @@ export function sensorTarget(project, sensor) {
 
 const k = (c, p) => keyOf({ c, p });
 
+// ¿La red de un borne llega a un borne de fuente con ese papel (supply+ o gnd)? Se revisa con los cables
+// fijos del proyecto, sin contar contactos que se abran o cierren durante la simulación.
+function feeds(project, groups, component, portId, role) {
+  return [...netOf(groups, { c: component.id, p: portId })].some((key) => {
+    const [c, p] = key.split(':');
+    const other = project.components.find((x) => x.id === c);
+    return other && other.id !== component.id && definition(other.type).ports.some((port) => port.id === p && port.role === role);
+  });
+}
+
 export function createSim(project) {
   const sim = { t: 0, project, parts: new Map(), boards: [], events: [], warned: new Set(), view: null };
   const elecNets = nets(project, 'elec');
@@ -84,12 +113,29 @@ export function createSim(project) {
       part.slow = definition(c.type).ports.some((port) => [...netOf(airNets, { c: c.id, p: port.id })]
         .some((key) => project.components.find((x) => x.id === key.split(':')[0])?.type === 'reguladora'));
     }
-    if (c.type === 'potenciometro') part.value = Number(c.config.value ?? 512);
+    // Lecturas analógicas por puerto. La primera también queda en part.value.
+    const analog = definition(c.type).analog ?? [];
+    part.values = Object.fromEntries(analog.map((a, i) => [a.port, Number((i === 0 ? c.config.value : undefined) ?? a.start ?? 512)]));
+    if (analog.length) part.value = part.values[analog[0].port];
+    if (c.type === 'servo') part.angle = servoAngles(c).off;
+    if (c.type === 'lcd-i2c') part.text = ['', ''];
+    // Un módulo solo funciona si su VCC y su GND llegan a una fuente de 5 V.
+    if (definition(c.type).module || definition(c.type).needsPower) part.powered = feeds(project, elecNets, c, 'VCC', 'supply+') && feeds(project, elecNets, c, 'GND', 'gnd');
     sim.parts.set(c.id, part);
   }
   for (const board of boards(project)) {
     const rows = pinRows(project, board);
     sim.boards.push({ board, rows, state: new Map(), levels: new Map(), values: new Map() });
+  }
+  // Ultrasónico: mide solo si su Trig recibe el pulso de un pin. Pantalla: SDA en A4 y SCL en A5 de una placa.
+  for (const c of project.components.filter((x) => x.type === 'ultrasonico')) {
+    const group = netOf(elecNets, { c: c.id, p: 'Trig' });
+    sim.parts.get(c.id).trigOk = sim.boards.some((b) => b.rows.some((r) => r.mode === 'trig' && group.has(k(b.board.id, r.id))));
+  }
+  for (const c of project.components.filter((x) => x.type === 'lcd-i2c')) {
+    const sda = netOf(elecNets, { c: c.id, p: 'SDA' });
+    const scl = netOf(elecNets, { c: c.id, p: 'SCL' });
+    sim.parts.get(c.id).busOk = sim.boards.some((b) => sda.has(k(b.board.id, 'A4')) && scl.has(k(b.board.id, 'A5')));
   }
   // Pin del Arduino que mueve cada módulo de relé.
   for (const c of project.components.filter((x) => x.type === 'modulo-rele')) {
@@ -99,11 +145,14 @@ export function createSim(project) {
       if (row) sim.parts.get(c.id).driver = { board: b, row };
     }
   }
-  // Pin al que llega el cursor de cada potenciómetro.
+  // Pin al que llega la señal de cada potenciómetro o sensor analógico.
   sim.potOf = new Map();
-  for (const c of project.components.filter((x) => x.type === 'potenciometro')) {
-    for (const key of netOf(elecNets, { c: c.id, p: 'W' })) sim.potOf.set(key, c.id);
+  for (const c of project.components) {
+    for (const { port } of definition(c.type).analog ?? []) {
+      for (const key of netOf(elecNets, { c: c.id, p: port })) sim.potOf.set(key, { id: c.id, port });
+    }
   }
+  createEnergy(sim);
   log(sim, 'Inicio', 'Simulación iniciada.');
   solve(sim);
   return sim;
@@ -124,9 +173,10 @@ function warnOnce(sim, id, text) {
 
 function actuated(sim, c) {
   const part = sim.parts.get(c.id);
-  if (HOLD.has(c.type)) return part.pressed;
+  if (isHold(c.type)) return part.pressed;
   if (TOGGLE.has(c.type)) return part.toggled;
   if (SENSORS.has(c.type)) return part.target ? part.detect : part.pressed;
+  if (c.type === 'flotador') return part.detect;
   return part.on;
 }
 
@@ -136,6 +186,7 @@ function solve(sim) {
   const edges = [];
   const resistorEdges = [];
   for (const link of project.links.filter((l) => l.kind === 'elec')) edges.push({ id: link.id, a: keyOf(link.a), b: keyOf(link.b) });
+  edges.push(...internalEdges(project, 'elec'));
   for (const c of project.components) {
     for (const [a, b, kind] of CONTACTS[c.type] ?? []) {
       const on = actuated(sim, c);
@@ -152,6 +203,14 @@ function solve(sim) {
   for (const c of project.components) {
     if (c.type === 'fuente-24') { pos24.push(k(c.id, '+24')); gnd24.push(k(c.id, '0V')); }
     if (c.type === 'arduino-uno') { pos5.push(k(c.id, '5V')); gnd5.push(k(c.id, 'GND')); }
+    if (c.type === 'fuente-5') { pos5.push(k(c.id, '+5V')); gnd5.push(k(c.id, 'GND')); }
+    // Módulos de sensor digitales: su señal entrega 5 V o tierra según detecten y según su lógica.
+    const mod = definition(c.type).module;
+    if (mod) {
+      const part = sim.parts.get(c.id);
+      if (part.powered) (part.pressed !== mod.activeLow ? pos5 : gnd5).push(k(c.id, 'OUT'));
+      else if (part.pressed) warnOnce(sim, `sinvcc-${c.id}`, `${c.label} no tiene VCC y GND conectados a 5 V: no entrega señal.`);
+    }
     if (c.type === 'optoacoplador') (sim.parts.get(c.id).on ? pos5 : gnd5).push(k(c.id, 'OUT'));
   }
   for (const b of sim.boards) {
@@ -160,18 +219,42 @@ function solve(sim) {
       (level === 'HIGH' ? pos5 : gnd5).push(k(b.board.id, row.id));
     }
   }
-  const all = [...edges, ...resistorEdges];
-  const from = (starts, list = all) => {
+  const from = (starts, list) => {
     const virtual = starts.map((s, i) => ({ id: `@${i}`, a: '@', b: s }));
     const set = reach([...list, ...virtual], () => true, '@');
     set.delete('@');
     return set;
   };
-  const v = {
-    hot24: from(pos24), hot5: from(pos5), gnd24: from(gnd24), gnd5: from(gnd5),
-    bare: from([...pos24, ...pos5], edges),
+  const compute = () => {
+    const all = [...edges, ...resistorEdges];
+    const result = {
+      hot24: from(pos24, all), hot5: from(pos5, all), gnd24: from(gnd24, all), gnd5: from(gnd5, all),
+      bare: from([...pos24, ...pos5], edges),
+    };
+    result.gnd = new Set([...result.gnd24, ...result.gnd5]);
+    return result;
   };
-  v.gnd = new Set([...v.gnd24, ...v.gnd5]);
+  // Transistores: conducen de colector a emisor si su base recibe tensión. Un transistor puede
+  // mover la base de otro, así que se repite hasta que ya no cambia nada.
+  const transistors = project.components.filter((c) => c.type === 'transistor-npn');
+  const conducting = new Set();
+  let v = compute();
+  for (let round = 0; round <= transistors.length; round += 1) {
+    const fresh = transistors.filter((c) => !conducting.has(c.id) && (v.hot5.has(k(c.id, 'B')) || v.hot24.has(k(c.id, 'B'))));
+    if (!fresh.length) break;
+    for (const c of fresh) {
+      conducting.add(c.id);
+      edges.push({ id: `${c.id}:CE`, a: k(c.id, 'C'), b: k(c.id, 'E') });
+    }
+    v = compute();
+  }
+  for (const c of transistors) {
+    const part = sim.parts.get(c.id);
+    part.on = conducting.has(c.id);
+    if (part.on && v.bare.has(k(c.id, 'B'))) {
+      warnOnce(sim, `base-${c.id}`, `${c.label}: la base recibe tensión sin resistencia. En la vida real se dañan el transistor y el pin.`);
+    }
+  }
 
   for (const [set, other, name] of [[v.hot24, v.gnd24, '24 V'], [v.hot5, v.gnd5, '5 V'], [v.hot24, v.gnd5, '24 V'], [v.hot5, v.gnd24, '5 V']]) {
     if ([...set].some((key) => other.has(key))) {
@@ -190,7 +273,7 @@ function solve(sim) {
       if (volts === 24 && !on && fed(v.hot5, v.gnd5)) {
         warnOnce(sim, `bajo-${c.id}`, `${c.label}: la ${name} es de 24 V y solo recibe 5 V. No se mueve; usa un módulo de relé.`);
       }
-      if (on && c.type === 'led-solo' && v.bare.has(p)) {
+      if (on && definition(c.type).ports.some((port) => port.id === plus && port.bareLed) && v.bare.has(p)) {
         part.burned = true;
         warnOnce(sim, `quemado-${c.id}`, `${c.label} se quemó: recibió tensión sin resistencia. Reinicia la simulación después de agregarla.`);
       }
@@ -204,6 +287,7 @@ function solve(sim) {
   const sources = [];
   for (const c of project.components) {
     if (c.type === 'fuente-aire') sources.push(k(c.id, 'out'));
+    if (c.type === 'compresor' && sim.parts.get(c.id).on) sources.push(k(c.id, 'out'));
     if (c.type === 'reguladora') airEdges.push({ id: `${c.id}:r`, a: k(c.id, 'in'), b: k(c.id, 'out') });
     const def = definition(c.type);
     if (def.category !== 'valvulas' || c.type === 'reguladora') continue;
@@ -222,7 +306,7 @@ function solve(sim) {
 
 function valveOn(sim, c) {
   const part = sim.parts.get(c.id);
-  if (HOLD.has(c.type) || TOGGLE.has(c.type) || SENSORS.has(c.type)) return actuated(sim, c);
+  if (isHold(c.type) || TOGGLE.has(c.type) || SENSORS.has(c.type)) return actuated(sim, c);
   return part.on;
 }
 
@@ -235,7 +319,17 @@ function runBoards(sim) {
       const key = k(b.board.id, row.id);
       if (row.mode === 'analog') {
         const pot = sim.potOf.get(key);
-        values.set(row.id, pot ? sim.parts.get(pot).value : v.hot5.has(key) || v.hot24.has(key) ? SIM.ADC_MAX : 0);
+        values.set(row.id, pot ? sim.parts.get(pot.id).values[pot.port] : v.hot5.has(key) || v.hot24.has(key) ? SIM.ADC_MAX : 0);
+      } else if (row.mode === 'distance') {
+        const pot = sim.potOf.get(key);
+        const part = pot && sim.parts.get(pot.id);
+        let cm = RANGES.distance.max;
+        if (part?.powered && part.trigOk) cm = part.values[pot.port];
+        else if (part) {
+          const label = sim.project.components.find((c) => c.id === pot.id).label;
+          warnOnce(sim, `sonar-${pot.id}`, `${label} no mide: le falta ${part.powered ? 'el pulso de Trig desde un pin' : 'VCC y GND'}. El pin lee 400 cm, como si no regresara el eco.`);
+        }
+        values.set(row.id, cm);
       } else if (row.mode === 'input_pullup' || row.mode === 'input') {
         let level;
         if (v.gnd.has(key)) level = 'LOW';
@@ -248,13 +342,30 @@ function runBoards(sim) {
         values.set(row.id, level === row.active);
       }
     }
+    const servoOf = (id) => {
+      const row = b.rows.find((r) => r.id === id);
+      const c = row?.inferred.component;
+      return row?.mode === 'servo' ? (c?.type === 'servo' ? servoAngles(c) : { off: 0, on: 90 }) : null;
+    };
     for (const rule of b.board.config.rules ?? []) {
       if (ruleProblem(b.rows, rule)) continue;
       const input = values.get(rule.input);
+      const servo = servoOf(rule.output);
+      if (rule.action === 'angulo') {
+        // Igual que map() de Arduino: aritmética entera que trunca.
+        const { min, max } = RANGES[b.rows.find((r) => r.id === rule.input).mode];
+        const x = Math.max(min, Math.min(max, input));
+        b.state.set(rule.output, Math.trunc(((x - min) * (servo.on - servo.off)) / (max - min)) + servo.off);
+        continue;
+      }
       const test = { activa: input === true, inactiva: input === false, mayor: input > Number(rule.value), menor: input < Number(rule.value) }[rule.cond];
-      if (rule.action === 'seguir') b.state.set(rule.output, Boolean(test));
+      if (servo) {
+        if (rule.action === 'seguir') b.state.set(rule.output, test ? servo.on : servo.off);
+        else if (test) b.state.set(rule.output, rule.action === 'encender' ? servo.on : servo.off);
+      } else if (rule.action === 'seguir') b.state.set(rule.output, Boolean(test));
       else if (test) b.state.set(rule.output, rule.action === 'encender');
     }
+    for (const row of b.rows.filter((r) => r.mode === 'servo')) values.set(row.id, b.state.get(row.id) ?? servoOf(row.id).off);
     for (const row of b.rows.filter((r) => r.mode === 'output')) {
       const active = b.state.get(row.id) ?? false;
       const level = active ? row.active : row.active === 'HIGH' ? 'LOW' : 'HIGH';
@@ -262,6 +373,18 @@ function runBoards(sim) {
       b.levels.set(row.id, level);
     }
     b.values = values;
+
+    // Pantallas: el texto se arma con las lecturas y salidas de este ciclo.
+    for (const lcd of lcdsOf(b.rows)) {
+      const part = sim.parts.get(lcd.id);
+      if (!part.powered || !part.busOk) {
+        part.text = ['', ''];
+        warnOnce(sim, `lcd-${lcd.id}`, `${lcd.label} no muestra nada: ${part.powered ? 'SDA debe ir a A4 y SCL a A5' : 'le falta VCC y GND'}.`);
+        continue;
+      }
+      const valueOf = (row) => (row.mode === 'output' ? Boolean(b.state.get(row.id)) : values.get(row.id));
+      part.text = lcdLines(lcd).map((text) => lcdLine(text, b.rows, valueOf));
+    }
   }
 }
 
@@ -283,6 +406,7 @@ function tick(sim) {
 
   for (const c of project.components) {
     const part = sim.parts.get(c.id);
+    if (c.type === 'contactor') delayed(sim, c, part, part.energized[0], 'energiza: cierra su contacto de potencia.', 'cae: abre su contacto de potencia.');
     if (c.type === 'rele-24') delayed(sim, c, part, part.energized[0], 'energiza: cierran 13-14 y 23-24, abre 11-12.', 'cae: sus contactos regresan a reposo.');
     if (SOLENOID_VALVES.has(c.type)) delayed(sim, c, part, part.energized[0], 'conmuta: la bobina está energizada.', 'regresa por resorte.');
     if (c.type === 'valvula-52-bi') {
@@ -305,6 +429,25 @@ function tick(sim) {
     }
   }
 
+  // Servos: giran hacia el ángulo que manda su pin.
+  for (const b of sim.boards) {
+    for (const row of b.rows.filter((r) => r.mode === 'servo')) {
+      const c = row.inferred.component;
+      if (c?.type !== 'servo') continue;
+      const part = sim.parts.get(c.id);
+      const target = b.values.get(row.id);
+      if (target === part.angle) continue;
+      if (!part.powered) {
+        warnOnce(sim, `sinvcc-${c.id}`, `${c.label} recibe la señal pero no tiene VCC y GND conectados a 5 V: no se mueve.`);
+        continue;
+      }
+      const step = SIM.SERVO_SPEED * SIM.DT;
+      const diff = target - part.angle;
+      part.angle = Math.abs(diff) <= step ? target : Math.round((part.angle + Math.sign(diff) * step) * 1000) / 1000;
+      if (part.angle === target) log(sim, c.label, `llega a ${target}°.`);
+    }
+  }
+
   // Cilindros.
   const air = sim.v.air;
   for (const c of project.components.filter((x) => x.type.startsWith('cilindro'))) {
@@ -323,6 +466,9 @@ function tick(sim) {
     if (before < 100 && part.pos >= 100) log(sim, c.label, 'llega al final de su carrera.');
     if (before > 0 && part.pos <= 0) log(sim, c.label, 'regresa al inicio.');
   }
+
+  // Energía renovable, ejes y agua.
+  stepEnergy(sim, SIM.DT);
 
   // Sensores y finales de carrera.
   for (const c of project.components.filter((x) => SENSORS.has(x.type))) {
@@ -352,7 +498,11 @@ export function press(sim, id, down) {
   const c = sim.project.components.find((x) => x.id === id);
   if (!part || part.pressed === down) return;
   part.pressed = down;
-  log(sim, c.label, down ? 'se presiona.' : 'se suelta.');
+  const mod = definition(c.type).module;
+  const text = mod ? (down ? `detecta ${mod.label}.` : `deja de detectar ${mod.label}.`)
+    : c.type === 'sensor-inclinacion' ? (down ? 'se inclina: cierra el contacto.' : 'regresa a nivel: abre el contacto.')
+      : (down ? 'se presiona.' : 'se suelta.');
+  log(sim, c.label, text);
   solve(sim);
 }
 
@@ -361,14 +511,25 @@ export function toggle(sim, id) {
   const part = sim.parts.get(id);
   const c = sim.project.components.find((x) => x.id === id);
   part.toggled = !part.toggled;
-  log(sim, c.label, c.type === 'paro-emergencia'
-    ? (part.toggled ? 'se oprime y abre el circuito.' : 'se libera y cierra el circuito.')
-    : (part.toggled ? 'se mueve a la posición accionada.' : 'regresa a la posición de reposo.'));
+  const text = {
+    'paro-emergencia': part.toggled ? 'se oprime y abre el circuito.' : 'se libera y cierra el circuito.',
+    interruptor: part.toggled ? 'se enciende: cierra el circuito.' : 'se apaga: abre el circuito.',
+    'interruptor-potencia': part.toggled ? 'se cierra: deja pasar la energía.' : 'se abre: corta la energía.',
+    'valvula-agua': part.toggled ? 'se abre: deja pasar el agua.' : 'se cierra: corta el agua.',
+  }[c.type] ?? (part.toggled ? 'se mueve a la posición accionada.' : 'regresa a la posición de reposo.');
+  log(sim, c.label, text);
   solve(sim);
 }
 
-export function setValue(sim, id, value) {
-  sim.parts.get(id).value = Math.max(0, Math.min(SIM.ADC_MAX, Math.round(Number(value) || 0)));
+/** Mueve un potenciómetro, un sensor analógico o la distancia del ultrasónico. Sin puerto, mueve su primera lectura. */
+export function setValue(sim, id, value, port) {
+  const part = sim.parts.get(id);
+  const analog = definition(sim.project.components.find((c) => c.id === id).type).analog ?? [];
+  const target = port ?? analog[0]?.port;
+  const range = analog.find((a) => a.port === target) ?? {};
+  const clean = Math.max(range.min ?? 0, Math.min(range.max ?? SIM.ADC_MAX, Math.round(Number(value) || 0)));
+  part.values[target] = clean;
+  if (target === analog[0]?.port) part.value = clean;
 }
 
 /** Resumen para dibujar: qué cables tienen tensión, qué mangueras tienen aire y qué está activo. */
@@ -379,6 +540,7 @@ export function view(sim) {
     const a = keyOf(link.a);
     const b = keyOf(link.b);
     if (link.kind === 'air') links.set(link.id, v.air.has(a) && v.air.has(b) ? 'air' : '');
+    else if (link.kind !== 'elec') links.set(link.id, energyLink(sim, link));
     else if (v.hot24.has(a) && v.hot24.has(b)) links.set(link.id, 'v24');
     else if (v.hot5.has(a) && v.hot5.has(b)) links.set(link.id, 'v5');
     else links.set(link.id, '');
@@ -386,7 +548,8 @@ export function view(sim) {
   const parts = new Map();
   for (const c of sim.project.components) {
     const part = sim.parts.get(c.id);
-    const active = part.energized.some(Boolean) || part.on || actuated(sim, c) || part.detect;
+    const active = isEnergy(c.type) ? energyActive(sim, c) || part.energized.some(Boolean)
+      : part.energized.some(Boolean) || part.on || actuated(sim, c) || part.detect;
     parts.set(c.id, { ...part, active });
   }
   return { links, parts, air: v.air, hot24: v.hot24, hot5: v.hot5 };

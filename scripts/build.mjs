@@ -1,5 +1,5 @@
 // Une motor, práctica, interfaz y estilos en un solo dist/index.html, sin dependencias.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 // Se normaliza a LF para que el build sea igual en Windows y en Linux.
@@ -9,9 +9,12 @@ const read = async (path) => (await readFile(new URL(path, root), 'utf8')).repla
 // para que dos archivos puedan usar los mismos nombres internos.
 const MODULES = [
   'src/plans.js',
+  'src/account.js',
+  'src/account-ui.js',
   'src/engine.js',
   'src/practices/p01.js',
   'src/ui.js',
+  'src/editor/catalog-energia.js',
   'src/editor/catalog.js',
   'src/editor/calc.js',
   'src/editor/learn.js',
@@ -19,8 +22,12 @@ const MODULES = [
   'src/editor/arduino.js',
   'src/editor/rango.js',
   'src/editor/web.js',
+  'src/editor/energia.js',
   'src/editor/sim.js',
   'src/editor/dialog.js',
+  'src/editor/tutorial.js',
+  'src/editor/escena3d.js',
+  'src/editor/vista3d.js',
   'src/editor/ui.js',
 ];
 
@@ -64,6 +71,11 @@ const html = (await read('src/index.template.html'))
 await mkdir(new URL('dist/', root), { recursive: true });
 await writeFile(new URL('dist/index.html', root), html);
 console.log(`dist/index.html: ${(html.length / 1024).toFixed(1)} KB`);
+
+// Three.js para la vista 3D: se carga solo al abrirla, desde dist/vendor/ (misma dirección que la página).
+await mkdir(new URL('dist/vendor/', root), { recursive: true });
+for (const file of ['three.module.min.js', 'THREE-LICENSE.txt']) await copyFile(new URL(`vendor/${file}`, root), new URL(`dist/vendor/${file}`, root));
+console.log('dist/vendor/three.module.min.js copiado');
 
 // Página pública de planes, estática y sin scripts. Se sirve en /planes/.
 const { renderPlansPage } = await import(new URL('src/plans-page.js', root));

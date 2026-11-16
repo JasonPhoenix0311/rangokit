@@ -18,6 +18,7 @@
     </nav>
     <div class="top-links">
       <a class="home-link" href="planes/index.html">Planes</a>
+      <button type="button" class="home-link" id="account-open" aria-haspopup="dialog">Docentes: entrar</button>
       <a class="home-link" href="https://ddtec.com.mx/" title="Ir a la página de Phoenix Office">← Phoenix Office</a>
     </div>
   </header>
@@ -96,9 +97,11 @@
 
   <div class="view" id="view-editor" hidden></div>
 
+  <dialog class="account-dialog" id="account-dialog" aria-labelledby="acc-title"></dialog>
+
   <footer>
     <p>Demo de concepto con una sola práctica. La física está simplificada: velocidad constante, sin caída de presión y con válvula de mando directo. Las pistas salen de reglas fijas y no usan IA. Revisa tu instalación real antes de energizarla.</p>
-    <p>Rangokit es código abierto bajo licencia AGPL-3.0.<!--__SOURCE__--> No envía tus datos y funciona sin conexión; solo se conecta a GitHub si pides buscar proyectos.</p>
+    <p>Rangokit es código abierto bajo licencia AGPL-3.0.<!--__SOURCE__--> Tus proyectos no salen de tu navegador y funciona sin conexión. Solo se conecta a DDTEC si un docente entra a su cuenta, y a GitHub si pides buscar proyectos. La vista 3D descarga su librería de esta misma página (o de jsDelivr si abres el archivo desde tu disco) y no envía nada de tu proyecto.</p>
   </footer>
 </div>
 <script>/*__SCRIPT__*/</script>

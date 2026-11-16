@@ -170,7 +170,7 @@ svg.ed-canvas { width: 1600px; max-width: none; height: 1000px; }
 .editor.running .ed-comp.interactive .ed-body { stroke: var(--line); stroke-dasharray: 2 4; }
 .editor.running .ed-comp.interactive:hover .ed-body { stroke: var(--ink); }
 .ed-comp.active .ed-body { stroke: var(--electric); stroke-dasharray: none; stroke-width: 2; }
-.ed-comp.active .sym rect:not(.chamber-fill) { fill: color-mix(in srgb, var(--electric) 18%, transparent); }
+.ed-comp.active .sym rect:not(.chamber-fill):not(.water-fill) { fill: color-mix(in srgb, var(--electric) 18%, transparent); }
 .ed-comp.burned .ed-body { stroke: var(--fault); stroke-width: 3; stroke-dasharray: 6 4; }
 .editor.running .ed-comp.led:not(.active) .sym path:first-of-type { fill-opacity: .2; }
 .ed-comp.led.active .sym path:first-of-type { filter: drop-shadow(0 0 6px var(--led)) drop-shadow(0 0 2px var(--led)); }
@@ -267,3 +267,78 @@ textarea {
   .palette-items { max-height: 260px; }
   .canvas-wrap { height: 460px; }
 }
+
+/* Protoboard: placa, rieles + (rojo) y − (azul), canal central y tiras internas. */
+.sym .pb-board { fill: var(--paper); stroke: var(--line); }
+.sym .pb-plus { stroke: var(--fault); stroke-width: 2; }
+.sym .pb-minus { stroke: var(--air); stroke-width: 2; }
+.sym .pb-channel { fill: var(--line); stroke: none; opacity: 0.5; }
+.sym .pb-strip { stroke: var(--line); stroke-width: 1; opacity: 0.6; }
+.glyph-text.pb-tag { font-size: 9px; fill: var(--muted); }
+.ed-port.hole .dot { fill: var(--sheet); stroke: var(--muted); stroke-width: 1.5; }
+.ed-port.hole.used .dot { fill: var(--volt); stroke: var(--volt); }
+.ed-port.hole:hover .dot, .ed-port.hole:focus-visible .dot { stroke: var(--volt); stroke-width: 3; }
+
+/* Display de 7 segmentos: los segmentos encendidos se rellenan durante la simulación. */
+.sym .seg { fill: none; stroke-width: 1.5; }
+.sym .seg.on { fill: var(--fault); stroke: var(--fault); }
+
+/* Servo: brazo y escala de 0 a 180°. Pantalla LCD: fondo iluminado y un carácter por celda. */
+.sym .servo-dial { fill: none; stroke: var(--line); stroke-dasharray: 2 3; }
+.sym .servo-arm { stroke: var(--volt); stroke-linecap: round; }
+.sym .lcd-screen { fill: var(--ok); fill-opacity: 0.16; stroke: var(--ok); }
+.sym .lcd-char { font-family: var(--mono); font-size: 13px; fill: var(--ink); stroke: none !important; }
+
+/* Laboratorio de energías renovables: potencia, ejes y agua. */
+.ed-port.pot .dot { stroke: var(--power); }
+.ed-port.eje .dot { stroke: var(--muted); }
+.ed-port.agua .dot { stroke: var(--water); }
+.ed-port.used.pot .dot { fill: var(--power); }
+.ed-port.used.eje .dot { fill: var(--muted); }
+.ed-port.used.agua .dot { fill: var(--water); }
+.ed-link.pot .line { stroke: var(--power); stroke-width: 3.5; }
+.ed-link.eje .line { stroke: var(--muted); stroke-width: 5; stroke-dasharray: 2 4; stroke-linecap: round; }
+.ed-link.agua .line { stroke: var(--water); stroke-width: 5; opacity: .85; }
+.ed-link.live.pw .line { stroke: var(--power); stroke-width: 4.5; stroke-dasharray: 12 6; animation: run .5s linear infinite; }
+.ed-link.live.spin .line { stroke: var(--ink); stroke-dasharray: 3 3; animation: run .25s linear infinite; }
+.ed-link.live.flow .line { stroke: var(--water); stroke-width: 6; stroke-dasharray: 8 6; animation: run .8s linear infinite; opacity: 1; }
+.water-fill { fill: var(--water); opacity: .35; stroke: none !important; }
+.sym .shaft { stroke-width: 4; }
+.run-controls.env { gap: 6px; }
+.run-controls .check { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+.pins.energy th { text-align: left; font-weight: 500; }
+@media (prefers-reduced-motion: reduce) {
+  .ed-link.live.pw .line, .ed-link.live.spin .line, .ed-link.live.flow .line { animation: none; }
+}
+
+/* Vista 3D: ocupa el mismo lugar que el plano. */
+.view3d { grid-area: canvas; position: relative; min-width: 0; height: 640px; border: 1px solid var(--line); background: var(--paper); overflow: hidden; }
+.view3d[hidden], .canvas-wrap[hidden] { display: none; }
+.view3d-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; outline: none; }
+.view3d-canvas:active { cursor: grabbing; }
+.view3d-canvas:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.view3d-hint { position: absolute; left: 10px; bottom: 8px; margin: 0; padding: 4px 8px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--sheet) 85%, transparent); pointer-events: none; }
+.view3d-frame { position: absolute; right: 10px; top: 10px; }
+.editor.running .view3d { outline: 2px solid var(--ok); outline-offset: -2px; }
+@media (max-width: 900px) { .view3d { height: 460px; } }
+
+/* Tutoriales */
+.tutorials { display: grid; gap: 8px; margin: 4px 0 18px; }
+.tutorials h3 { font-family: var(--display); font-weight: 600; font-size: 20px; }
+.tutorial-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.tutorial-list li { display: grid; gap: 6px; align-content: start; padding: 12px; background: var(--sheet); border: 1px solid var(--line); }
+.tutorial-list li button { justify-self: start; margin-top: 4px; }
+.tutorial-card { display: grid; gap: 8px; padding: 12px; margin-bottom: 10px; border: 2px solid var(--fault); background: color-mix(in srgb, var(--fault) 7%, var(--sheet)); }
+.tutorial-card[hidden] { display: none; }
+.tutorial-card h3 { font-family: var(--display); font-weight: 600; font-size: 19px; }
+.tutorial-card progress { width: 100%; accent-color: var(--fault); }
+.tutorial-steps { display: grid; gap: 3px; padding-left: 20px; font-size: 13px; }
+.tutorial-steps li.done { color: var(--ok); }
+.tutorial-steps li.done::marker { content: '✓  '; }
+.tutorial-steps li.current { font-weight: 700; }
+.tut-target:not(g) { outline: 3px solid var(--fault); outline-offset: 2px; animation: tutpulse 1.2s ease-in-out infinite; }
+.ed-port.tut-target .dot { stroke: var(--fault); stroke-width: 5; fill: var(--fault); }
+.ed-port.tut-target .hit { fill: color-mix(in srgb, var(--fault) 25%, transparent); }
+.ed-comp.tut-target .ed-body { stroke: var(--fault); stroke-width: 3; stroke-dasharray: 6 4; }
+@keyframes tutpulse { 50% { outline-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .tut-target:not(g) { animation: none; } }
