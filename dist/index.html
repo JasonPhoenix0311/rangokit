@@ -7649,6 +7649,17 @@ function saveAll() {
 function touch() {
   ed.project.updated = new Date().toISOString();
   saveAll();
+  // Cualquier cambio al proyecto (agregar, conectar, mover, borrar, ajustar) revisa el tutorial
+  // y actualiza la vista 3D, sin importar desde qué parte de la interfaz se hizo.
+  sync3d();
+  renderTutorial();
+}
+
+/** La vista 3D se rehace al momento si está a la vista; si está oculta, al volver a mostrarla. */
+function sync3d() {
+  if (!ed.v3d) return;
+  if (ed.mode3d) ed.v3d.rebuild();
+  else ed.v3dDirty = true;
 }
 
 function setStatus(text, kind = '') {
@@ -8654,7 +8665,7 @@ function zoomToFit() {
 }
 
 function refresh() {
-  ed.v3d?.rebuild();
+  sync3d();
   renderCanvas();
   renderInspector();
   renderArduino();
@@ -8767,6 +8778,10 @@ function setView(mode) {
   $('ed-v2d').setAttribute('aria-pressed', String(!is3d));
   $('ed-v3d').setAttribute('aria-pressed', String(is3d));
   if (updateTutorial()) renderTutorial();
+  if (is3d && ed.v3d && ed.v3dDirty) {
+    ed.v3d.rebuild();
+    ed.v3dDirty = false;
+  }
   if (!is3d || ed.v3d || ed.v3dLoading) return;
   ed.v3dLoading = true;
   setStatus('Cargando la vista 3D…');
